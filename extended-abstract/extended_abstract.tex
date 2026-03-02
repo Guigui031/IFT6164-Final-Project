@@ -11,8 +11,7 @@
 \usepackage{microtype}      % microtypography
 \usepackage{amsmath}
 
-% TODO: Replace with your project title
-\title{Your Project Title Here}
+\title{Does Parameter Sharing in Multi-Agent Reinforcement Learning\\Amplify or Dampen Adversarial Vulnerability?}
 
 % TODO: Fill in author information
 \author{%
@@ -30,57 +29,37 @@
 \maketitle
 
 % ============================================================================
-% SECTION 1: INTRODUCTION & MOTIVATION
+% SECTION 1: INTRODUCTION
 % ============================================================================
 \section{Introduction}
+In cooperative Multi-Agent Reinforcement Learning (MARL), \emph{parameter sharing}---where all homogeneous agents use a single neural network distinguished only by an agent identifier---is the default in VDN \citep{sunehag2018vdn}, QMIX \citep{rashid2020qmix}, and MAPPO \citep{yu2022mappo}. It improves sample efficiency and often final performance \citep{gupta2017cooperative}. However, MARL policies are brittle under adversarial observation perturbations \citep{zhang2021robust, zhou2025robust}, and a growing body of work develops adversarial training methods to address this. Crucially, none of these works isolate parameter sharing itself as a variable: they all adopt it by default without measuring whether it amplifies or dampens vulnerability.
 
-% TODO: What problem are you addressing? Why is it important/interesting in
-% the context of adversarial ML? Provide context and background.
-% Cite relevant prior work to position your project.
-
+Parameter sharing means all agents share the same gradient landscape. An adversarial perturbation direction discovered against one agent's input transfers to all others because the weights are identical; with independent parameters, an adversary must find $N$ separate vulnerabilities. Yet the opposite effect is also plausible---shared experience may act as implicit regularization. We propose a controlled ablation study to measure this interaction, training MARL teams with shared vs.\ independent parameters and subjecting both to identical attacks. We pre-register three hypotheses: (H1)~shared parameters amplify performance degradation under attack, (H2)~gradient-based perturbations transfer more across agents with shared weights, and (H3)~learned adversaries require fewer steps to succeed against shared-parameter teams.
 
 % ============================================================================
 % SECTION 2: RELATED WORK
 % ============================================================================
 \section{Related work}
+\textbf{Adversarial robustness in single-agent RL.}
+\citet{zhang2021robust} formalize the State-Adversarial MDP (SA-MDP) framework, showing that standard deep RL policies are vulnerable to small $\ell_\infty$-bounded perturbations on state observations, and propose policy regularization to improve robustness. \citet{zhang2021atla} build on this by training a learned adversary using RL that alternates with the protagonist agent (ATLA); this produces stronger attacks than one-step gradient methods but is limited to low-dimensional observation spaces. \citet{sun2022paad} prove that adversarial observation perturbations are equivalent to policy perturbations and introduce the Policy Adversarial Actor and Director (PAAD) framework, which decomposes the adversary into a director that suggests policy perturbations and an actor that generates the corresponding observation perturbations. This decomposition makes adversarial training tractable in high-dimensional observation spaces. All three works operate in single-agent settings.
 
-% TODO: Briefly survey the most relevant papers. What has been done before?
-% What gaps remain? How does your proposed work differ from or build upon
-% existing methods?
+\textbf{Robust multi-agent RL.}
+Extending adversarial robustness to MARL introduces the challenge that perturbing one agent's observations affects the entire team's reward. \citet{guo2024multiagent} adapt PAAD to multi-agent scenarios but find that training against the strongest adversary causes the protagonist to overfit to adversarial perturbations, degrading clean-environment performance. \citet{zhou2025robust} address this with Adversarial Training with Stochastic Adversary (ATSA), which replaces the deterministic adversary with a stochastic one consisting of a Stochastic Director (SDor) and an SDor-guided Generator (STor). SDor maximizes both attack effectiveness and policy entropy, preventing overfitting to a single perturbation pattern. They prove that SDor's soft policy converges to a global optimum under factorized maximum-entropy MARL. ATSA achieves state-of-the-art robustness on SMAC \citep{samvelyan2019smac} and autonomous driving benchmarks, outperforming 11 baselines.
+Other approaches to robust MARL include ERNIE \citep{bukharin2023ernie}, which promotes Lipschitz continuity through adversarial regularization; RAP \citep{vinitsky2020rap}, which maintains a population of adversaries to avoid overfitting to a single attacker; and ROMANCE \citep{yuan2023romance}, which evolves diverse auxiliary adversarial attackers. All of these methods use parameter sharing as the default architectural choice.
 
-
-% ============================================================================
-% SECTION 3: PROPOSED APPROACH / HYPOTHESES
-% ============================================================================
-\section{Proposed approach}
-
-% TODO: Describe your method, hypothesis, or research question clearly.
-% - What is your scientific hypothesis?
-% - What approach will you take (empirical experiments / theoretical proofs)?
-% - What is novel about your approach?
-%
-% Remember: this is a pre-registration. Clearly separate hypothesis
-% formulation from confirmation. You are NOT expected to have results yet.
-
+\textbf{Parameter sharing in MARL.}
+\citet{gupta2017cooperative} demonstrate that parameter sharing improves learning efficiency for homogeneous agents by allowing all agents to contribute to the same gradient updates. \citet{yu2022mappo} provide a comprehensive empirical study of MAPPO across SMAC, MPE, Google Research Football, and Hanabi, finding that shared parameters match or exceed independent parameters on most benchmarks (Appendix C.2). \citet{lowe2017maddpg} take the opposite approach in MADDPG, using independent parameters for each agent with a centralized critic, which naturally supports heterogeneous and competitive settings.
+Despite this body of work studying parameter sharing for \emph{performance}, no prior study examines how it interacts with \emph{adversarial robustness}. This is the gap we address.
 
 % ============================================================================
-% SECTION 4: EXPERIMENTAL PLAN
+% SECTION 3: METHODOLOGY AND RESOURCES
 % ============================================================================
-\section{Experimental plan}
+\section{Methodology and resources}
+\textbf{Environments.} (1)~SMAC \citep{samvelyan2019smac}: maps \texttt{3m} and \texttt{8m}, homogeneous agents, discrete actions, win rate metric. (2)~MPE Cooperative Navigation \citep{mordatch2018mpe, lowe2017maddpg}: supports discrete (MAPPO) and continuous (MADDPG) actions, mean reward metric. If time permits, we add MPE Physical Deception, which has a built-in adversarial agent.
 
-% TODO: Describe the experiments you plan to run or proofs you plan to develop.
-% - Datasets, models, baselines, metrics
-% - What would a positive result look like? A negative result?
-% - How will you validate or invalidate your hypothesis?
+\textbf{Protocol.} On SMAC we use VDN/QMIX; on MPE, MAPPO and MADDPG. Each algorithm is trained in three variants: shared parameters, independent parameters, and shared-but-wider (matching total parameter count to control for capacity). Attacks are $\ell_\infty$-bounded ($\epsilon{=}0.25$ for \texttt{3m}, $0.1$ for \texttt{8m}, $0.05$ for MPE) using FGSM \citep{goodfellow2014explaining} and ATLA \citep{zhang2021atla} in discrete settings, or FGSM and random noise in continuous settings where learned adversaries struggle \citep{zhou2025robust}. We use 5 seeds per configuration and evaluate under clean, noisy, and adversarial conditions without retraining. We measure performance drop ($\Delta$WR/$\Delta$Reward), cross-agent perturbation transfer, and adversary sample efficiency.
 
-
-% ============================================================================
-% SECTION 5: COMPUTATIONAL RESOURCES
-% ============================================================================
-\section{Resources}
-
-% TODO: Indicate the computational resources you have access to.
-% (e.g., personal GPU, Compute Canada cluster, Google Colab, Mila cluster, etc.)
+\textbf{Resources.} Mila cluster and personal GPUs. SMAC runs take 1--2h per seed; MPE under 30min. The full matrix (${\sim}$90--135 runs) is feasible. We use PyMARL \citep{christianos2020epymarl} for SMAC and PettingZoo \citep{terry2021pettingzoo} for MPE.
 
 
 % ============================================================================
