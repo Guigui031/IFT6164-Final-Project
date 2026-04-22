@@ -121,10 +121,23 @@ if __name__ == "__main__":
         elif param.startswith("env_args.key"):
             map_name = param.split("=")[1]
 
+    # Respect local_results_path override from CLI ("with local_results_path=...").
+    _effective_results_path = results_path
+    for _p in params:
+        if _p.startswith("local_results_path="):
+            _override = _p.split("=", 1)[1].strip('"').strip("'")
+            if os.path.isabs(_override):
+                _effective_results_path = _override
+            else:
+                _effective_results_path = os.path.join(
+                    dirname(dirname(abspath(__file__))), _override
+                )
+            break
+
     # Save to disk by default for sacred
     logger.info("Saving to FileStorageObserver in results/sacred.")
     file_obs_path = os.path.join(
-        results_path, f"sacred/{config_dict['name']}/{map_name}"
+        _effective_results_path, f"sacred/{config_dict['name']}/{map_name}"
     )
 
     # ex.observers.append(MongoObserver(db_name="marlbench")) #url='172.31.5.187:27017'))
