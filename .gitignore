@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env
+
+# Jupyter / IPython
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Experiment outputs — kept out of git, reproduced from configs + seeds
+results/
+checkpoints/
+wandb/
+runs/
+tb_logs/
+*.ckpt
+*.pth
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.bbl
+*.blg
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# EPyMARL vendored fork — keep source tracked, ignore its local state
+epymarl/results/
+epymarl/.git/
+epymarl/__pycache__/
