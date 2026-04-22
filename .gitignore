@@ -16,9 +16,10 @@ env/
 # Jupyter / IPython
 .ipynb_checkpoints/
 
-# IDE
+# IDE / editor / agent local state
 .vscode/
 .idea/
+.claude/
 *.swp
 
 # OS
@@ -47,5 +48,5 @@ tb_logs/
 
 # EPyMARL vendored fork — keep source tracked, ignore its local state
 epymarl/results/
-epymarl/.git/
 epymarl/__pycache__/
+epymarl/**/__pycache__/
