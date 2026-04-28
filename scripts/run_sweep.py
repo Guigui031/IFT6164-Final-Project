@@ -34,16 +34,18 @@ EPYMARL    = REPO_ROOT / "epymarl"
 ENV        = "mpe_simple_spread"
 ENV_KEY    = "pz-mpe-simple-spread-v3"
 TIME_LIMIT = 25
-T_MAX      = 1_000_000
-N_EVAL_EPS = 1000
+T_MAX      = 1_050_000
+N_EVAL_EPS = 500
 
 ATTACKS = ["no_attack", "random_noise", "fgsm", "sdor_stor"]
 
 # EPyMARL config per sharing variant, plus Sacred overrides to neutralise confounds
 # (use_rnn=True equalises RNN usage; see CLAUDE.md sharing-toggle section)
 TRAIN_CONFIGS = [
-    ("mappo",    "shared",      {"use_rnn": "True", "obs_agent_id": "True"}),
-    ("mappo_ns", "independent", {"use_rnn": "True"}),
+    ("mappo",    "shared",      {"use_rnn": "True", "obs_agent_id": "True",
+                                  "save_model": "True", "save_model_interval": "500000"}),
+    ("mappo_ns", "independent", {"use_rnn": "True",
+                                  "save_model": "True", "save_model_interval": "500000"}),
 ]
 
 
