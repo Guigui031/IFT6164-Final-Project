@@ -1,0 +1,18 @@
+# SDor+STor stochastic adversary (Zhou et al. 2025) at epsilon=0.1.
+# SDor was trained offline against the shared protagonist (Option B);
+# the same SDor checkpoint is used for both shared and independent eval —
+# STor's per-step FGSM uses the target MAC's own gradients, so the same
+# directional adversary transfers across sharing variants.
+
+env: mpe_simple_spread
+algo: mappo
+sharing: shared
+seed: 1
+
+attack: sdor_stor
+epsilon: 0.1
+n_episodes: 500
+
+# Required for sdor_stor — path to a directory containing sdor.pt.
+# One SDor was trained per seed; match the seed of the protagonist being attacked.
+sdor_ckpt: results/sdor/mpe_simple_spread/seed1
