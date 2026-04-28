@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import torch as th
+import yaml
 
 warnings.filterwarnings("ignore")
 
@@ -111,17 +112,41 @@ def run_episode(env, mac, scheme, groups, preprocess, args_ns):
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate a checkpoint under observation attack")
-    parser.add_argument("--algo",       required=True, choices=["mappo"])
-    parser.add_argument("--sharing",    required=True, choices=["shared", "independent"])
-    parser.add_argument("--env",        required=True, choices=list(ENV_MAP))
-    parser.add_argument("--seed",       type=int, required=True)
-    parser.add_argument("--attack",     required=True,
-                        choices=["no_attack", "random_noise", "fgsm", "sdor_stor"])
-    parser.add_argument("--epsilon",    type=float, default=0.0)
-    parser.add_argument("--n_episodes", type=int, default=100)
-    parser.add_argument("--sdor_ckpt", default=None,
+    parser.add_argument("--config",     type=Path, default=None,
+                        help="Path to attack YAML (alternative to CLI args)")
+    parser.add_argument("--algo",       choices=["mappo"])
+    parser.add_argument("--sharing",    choices=["shared", "independent"])
+    parser.add_argument("--env",        choices=list(ENV_MAP))
+    parser.add_argument("--seed",       type=int)
+    parser.add_argument("--attack",     choices=["no_attack", "random_noise", "fgsm", "sdor_stor"])
+    parser.add_argument("--epsilon",    type=float, default=None)
+    parser.add_argument("--n_episodes", type=int,   default=None)
+    parser.add_argument("--sdor_ckpt",  default=None,
                         help="Path to trained SDor checkpoint dir (required for sdor_stor)")
     args = parser.parse_args()
+
+    # If --config is given, load YAML and fill in any args not set on CLI.
+    # CLI args take precedence; YAML fills the gaps.
+    if args.config is not None:
+        if not args.config.exists():
+            parser.error(f"Attack YAML not found: {args.config}")
+        with open(args.config) as f:
+            cfg = yaml.safe_load(f)
+        for key in ("algo", "sharing", "env", "seed", "attack",
+                    "epsilon", "n_episodes", "sdor_ckpt"):
+            if getattr(args, key) is None and key in cfg:
+                setattr(args, key, cfg[key])
+
+    # Apply defaults for anything still unset (after CLI + YAML)
+    if args.epsilon    is None: args.epsilon    = 0.0
+    if args.n_episodes is None: args.n_episodes = 100
+
+    # Validate required fields
+    missing = [k for k in ("algo", "sharing", "env", "seed", "attack")
+               if getattr(args, k) is None]
+    if missing:
+        parser.error(f"Missing required field(s): {', '.join(missing)} "
+                     "(provide via --config YAML or CLI args)")
 
     env_info_map = ENV_MAP[args.env]
     env_key      = env_info_map["key"]
