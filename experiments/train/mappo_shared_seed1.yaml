@@ -1,0 +1,22 @@
+name: mpe_simple_spread
+
+env:
+  config: gymma
+  args:
+    key: pz-mpe-simple-spread-v3
+    time_limit: 25
+
+algo:
+  sacred_config: mappo
+  sharing: shared
+
+seed: 1
+t_max: 1_050_000
+
+overrides:
+  use_rnn: True
+  obs_agent_id: True
+  save_model: True
+  save_model_interval: 500_000
+
+plot_interval_sec: 60

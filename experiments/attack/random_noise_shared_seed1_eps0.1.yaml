@@ -1,0 +1,14 @@
+# Random Gaussian observation noise (untargeted floor) at epsilon=0.1.
+# Tests whether the protagonist degrades just from random perturbation;
+# attacks that don't beat this baseline aren't really attacks.
+
+env: mpe_simple_spread
+algo: mappo
+sharing: shared
+seed: 1
+
+attack: random_noise
+epsilon: 0.1
+n_episodes: 500
+
+sdor_ckpt: null

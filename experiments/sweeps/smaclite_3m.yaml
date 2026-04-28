@@ -1,0 +1,40 @@
+name: smaclite_3m
+
+env:
+  config: smaclite
+  args:
+    map_name: 3m
+    time_limit: 150
+    use_cpp_rvo2: False
+
+train:
+  t_max: 2_050_000
+  variants:
+    - sharing: shared
+      sacred_config: mappo
+      overrides:
+        use_rnn: True
+        obs_agent_id: True
+        save_model: True
+        save_model_interval: 500_000
+    - sharing: independent
+      sacred_config: mappo_ns
+      overrides:
+        use_rnn: True
+        save_model: True
+        save_model_interval: 500_000
+
+sdor:
+  epsilon: 0.1
+  n_train_episodes: 7_000
+  plot_interval: 500
+
+attack:
+  attacks: [no_attack, random_noise, fgsm, sdor_stor]
+  epsilons: [0.0, 0.05, 0.1, 0.2]
+  n_episodes: 500
+
+seeds: [1, 2, 3]
+
+plot:
+  team_interval_sec: 60
