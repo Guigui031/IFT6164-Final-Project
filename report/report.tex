@@ -75,13 +75,35 @@ MPE Cooperative Navigation \citep{mordatch2018mpe} is a simpler continuous-space
 % SECTION 3: BACKGROUND
 % ============================================================================
 \section{Background}
+\label{sec:background}
 
-% TODO: Define notation, threat models, and any prerequisites the reader
-% needs to understand your approach.
+\subsection{Decentralized POMDP}
+We model a cooperative team of $N$ agents as a Dec-POMDP. At each step, agent $i$ observes $o_i \in \Omega_i$ derived from global state $s$ and selects $a_i \sim \pi_i(\cdot \mid o_i)$. The joint action $\mathbf{a}$ produces $s' \sim \mathcal{T}(\cdot \mid s, \mathbf{a})$ and a shared team reward $r$. The team maximizes the discounted return $\mathbb{E}\big[\sum_t \gamma^t r_t\big]$.
+
+\subsection{Shared vs.\ independent parameter teams}
+The \emph{shared} variant uses a single policy $\pi_\theta$ for all agents, distinguished by a one-hot agent ID; the \emph{independent} variant gives each agent its own $\pi_{\xi_i}$. Both train under centralized training with decentralized execution: actors observe only $o_i$, while a centralized critic conditions on $s$. The structural difference is the parameter count: $|\theta|$ vs.\ $\sum_i |\xi_i| \approx N\,|\theta|$.
+
+\subsection{Observation-perturbation attacks}
+At evaluation, an adversary replaces each $o_i$ with $\tilde{o}_i = o_i + \delta_i$, subject to $\|\delta_i\|_\infty \leq \epsilon$; the protagonist is unmodified. We consider three attacks: \textbf{Random noise} ($\delta_i \sim \mathrm{Uniform}[-\epsilon,\epsilon]^{\dim o_i}$, a model-free baseline); \textbf{FGSM} \citep{goodfellow2014explaining}, a one-step gradient ascent on the protagonist's cross-entropy, $\delta_i = \epsilon \, \mathrm{sign}\,\nabla_{o_i}\mathcal{L}(\pi(o_i), a_i^\star)$; and \textbf{SDor+STor} \citep{zhou2025robust}, a learned stochastic adversary trained offline via Soft Actor--Critic, where SDor proposes an action-space perturbation direction $\hat{a}_i$ and STor finds the observation perturbation that maximally aligns the protagonist's policy shift with $\hat{a}_i$.
 
 
 % ============================================================================
-% SECTION 4: METHOD / APPROACH
+% SECTION 4: THEORETICAL MOTIVATION
+% ============================================================================
+\section{Theoretical motivation}
+\label{sec:theory}
+
+\paragraph{Why shared parameters might be more vulnerable.}
+\textbf{(i)} \textit{Correlated errors.} All agents apply the same Jacobian $\nabla_o \pi_\theta$ to their perturbed observations; under independent $\{\pi_{\xi_i}\}$, the per-agent Jacobians differ and errors partially decorrelate.
+\textbf{(ii)} \textit{Coordination penalizes correlation.} When agents must spread to cover distinct landmarks, errors pushing the team in the same direction leave landmarks uncovered, while decorrelated errors partially compensate. The expected return loss couples through the cross-agent error covariance --- large under sharing, small under independence.
+\textbf{(iii)} \textit{Easier attacker problem.} One perturbation that fools $\pi_\theta$ fools every agent at once; attacking $N$ independent policies requires fooling all of them simultaneously, a strictly more constrained optimization.
+
+\paragraph{Why shared parameters might be less vulnerable.}
+Shared parameters receive $N$ times more gradient signal per update, yielding smoother decision boundaries (smaller local Lipschitz constants) and acting as implicit regularization --- less local sensitivity for the attacker to exploit.
+
+
+% ============================================================================
+% SECTION 5: METHOD / APPROACH
 % ============================================================================
 \section{Method}
 All six algorithms are taken from EPyMARL \citep{christianos2020epymarl}, which provides both shared and non-shared parameter variants. Each algorithm is chosen to isolate a different aspect of how parameter sharing interacts with adversarial perturbations. IQL is the most basic value-based method: each agent learns a Q-function independently with no mixer or joint structure, making it the purest testbed for the effect of weight sharing alone. IPPO plays the same role on the policy gradient side. MAPPO adds a centralized critic that accesses global state during training, letting us test whether this additional information during learning produces policies that are more robust to perturbations at evaluation time. VDN and QMIX are value decomposition methods where individual Q-values are combined through a mixer (additive for VDN, non-linear for QMIX), which lets us observe whether the mixer dampens or amplifies perturbed Q-values. These are also the algorithms evaluated in the stochastic adversary paper \citep{zhou2025robust}, making our results directly comparable. Finally, MADDPG covers continuous action spaces and uses independent parameters by design, serving as a reference for a naturally non-shared architecture.
