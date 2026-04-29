@@ -50,3 +50,11 @@ tb_logs/
 epymarl/results/
 epymarl/__pycache__/
 epymarl/**/__pycache__/
+
+# Local-only — kept on disk, not shared with collaborator
+CLAUDE.md
+report/
+
+# Live training plots and aggregator outputs
+figures/
+training_plots/
