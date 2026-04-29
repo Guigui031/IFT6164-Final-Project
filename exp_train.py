@@ -27,13 +27,18 @@ EPYMARL_DIR  = REPO_ROOT / "epymarl"
 EPYMARL_MAIN = EPYMARL_DIR / "src" / "main.py"
 
 
-# CLI-mode env map (for backward-compat with the old CLI surface)
+# CLI-mode env map. env_args is the literal dict passed to sacred's `env_args`;
+# its shape varies per env_config (gymma uses "key", smaclite uses "map_name").
 ENV_MAP = {
     "mpe_simple_spread": {
-        "key":                "pz-mpe-simple-spread-v3",
-        "env_config":         "gymma",
-        "default_time_limit": 25,
-        "default_t_max":      1_050_000,
+        "env_config":    "gymma",
+        "env_args":      {"key": "pz-mpe-simple-spread-v3", "time_limit": 25},
+        "default_t_max": 1_050_000,
+    },
+    "smaclite_2s_vs_1sc": {
+        "env_config":    "smaclite",
+        "env_args":      {"map_name": "2s_vs_1sc", "time_limit": 150, "use_cpp_rvo2": False},
+        "default_t_max": 500_000,
     },
 }
 
@@ -96,8 +101,9 @@ def _poll_and_plot_team(proc, sacred_config: str, sacred_env_subdir: str,
                         sharing: str, seed: int,
                         plot_path: Path, interval_sec: int):
     sacred_base = EPYMARL_DIR / "results" / "sacred" / sacred_config / sacred_env_subdir
+    # Only numbered run dirs — sacred also creates a _sources subdir we must skip.
     known = (
-        {d.name for d in sacred_base.glob("*/") if d.is_dir()}
+        {d.name for d in sacred_base.glob("*/") if d.is_dir() and d.name.isdigit()}
         if sacred_base.exists() else set()
     )
     metrics_path: Path | None = None
@@ -117,7 +123,7 @@ def _poll_and_plot_team(proc, sacred_config: str, sacred_env_subdir: str,
         if metrics_path is None and sacred_base.exists():
             new = [
                 d for d in sacred_base.glob("*/")
-                if d.is_dir() and d.name not in known
+                if d.is_dir() and d.name not in known and d.name.isdigit()
             ]
             if new:
                 metrics_path = max(new, key=lambda d: int(d.name)) / "metrics.json"
@@ -166,13 +172,13 @@ def _params_from_cli(args) -> dict:
     overrides["save_model_interval"] = str(args.save_model_interval)
     if args.algo == "mappo" and args.sharing == "shared":
         overrides["obs_agent_id"] = "True"
+    env_args = dict(env_info["env_args"])
+    if args.time_limit is not None:
+        env_args["time_limit"] = args.time_limit
     return {
         "env_name":          args.env,
         "env_config":        env_info["env_config"],
-        "env_args":          {
-            "key":        env_info["key"],
-            "time_limit": args.time_limit or env_info["default_time_limit"],
-        },
+        "env_args":          env_args,
         "sacred_config":     sacred_config,
         "sharing":           args.sharing,
         "algo":              args.algo,

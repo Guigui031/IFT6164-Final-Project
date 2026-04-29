@@ -88,7 +88,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Train SDor offline against a frozen shared MAPPO protagonist"
     )
-    parser.add_argument("--algo",             default="mappo", choices=["mappo"])
+    parser.add_argument("--algo",             default="mappo",
+                        choices=["iql", "ippo", "mappo", "qmix", "vdn"])
     parser.add_argument("--env",              required=True, choices=list(ENV_MAP))
     parser.add_argument("--seed",             type=int, required=True,
                         help="Protagonist checkpoint seed to train against")
@@ -116,7 +117,7 @@ def main():
     env_key      = env_info_map["key"]
     # SDor always trains against the shared protagonist (Option B)
     sharing      = "shared"
-    algo_config  = env_info_map["algo_config"][sharing]
+    algo_config  = args.algo if sharing == "shared" else f"{args.algo}_ns"
 
     # --- Load frozen shared protagonist ---
     ckpt_path   = find_checkpoint(REPO_ROOT, args.env, args.algo, sharing, args.seed)
@@ -174,14 +175,16 @@ def main():
         device=device,
     )
 
-    out_dir = REPO_ROOT / args.out / args.env / f"seed{args.seed}"
+    # Path keyed by protagonist (env, algo, sharing, seed) so multiple SDors
+    # trained against different protagonists at the same seed don't collide.
+    out_dir = REPO_ROOT / args.out / args.env / args.algo / sharing / f"seed{args.seed}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     plot_path = (
         REPO_ROOT / "training_plots"
-        / f"sdor_{args.env}_seed{args.seed}_eps{args.epsilon}.png"
+        / f"sdor_{args.env}_{args.algo}_{sharing}_seed{args.seed}_eps{args.epsilon}.png"
     )
-    plot_title = f"SDor training — {args.env} seed{args.seed} ε={args.epsilon}"
+    plot_title = f"SDor training — {args.env} {args.algo}/{sharing} seed{args.seed} ε={args.epsilon}"
 
     # --- Metrics ---
     metrics = {

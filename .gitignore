@@ -54,6 +54,7 @@ epymarl/**/__pycache__/
 # Local-only — kept on disk, not shared with collaborator
 CLAUDE.md
 report/
+poster/
 
 # Live training plots and aggregator outputs
 figures/
