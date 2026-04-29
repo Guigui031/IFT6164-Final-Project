@@ -119,13 +119,63 @@ View the curves with:
 tensorboard --logdir epymarl/results/tb_logs
 ```
 
+## Optional: SMAClite (second-environment validation)
+
+[SMAClite](https://github.com/uoe-agents/smaclite) is a lightweight pure-Python reimplementation of SMAC scenarios — same interface, same maps, no StarCraft II install required. We use it as a stretch-goal cross-environment validation; the main MPE results don't depend on it.
+
+### Install
+
+```bash
+uv pip install --python .venv/Scripts/python.exe "git+https://github.com/uoe-agents/smaclite.git"
+```
+
+This pulls in `smaclite==0.0.1` plus `scikit-learn`, `joblib`, `rtree`, `threadpoolctl` (RVO2 collision-avoidance dependencies).
+
+### Verify the install
+
+```bash
+python -c "import smaclite, gymnasium as gym; print(sorted(s for s in gym.envs.registry if 'smac' in s))"
+```
+
+You should see ~13 registered scenarios under the `smaclite/` namespace, e.g. `smaclite/2s_vs_1sc-v0`, `smaclite/2s3z-v0`, `smaclite/3s5z-v0`, `smaclite/MMM-v0`.
+
+### Smoke test (2 minutes)
+
+```bash
+cd epymarl
+python src/main.py --config=qmix --env-config=smaclite \
+  with env_args.map_name=2s_vs_1sc \
+  t_max=5000 test_interval=100000 log_interval=2500 \
+  save_model=False use_tensorboard=False
+```
+
+### Train via our wrapper
+
+`exp_train.py`'s `ENV_MAP` already includes `smaclite_2s_vs_1sc`:
+
+```bash
+python exp_train.py --algo qmix --sharing shared --env smaclite_2s_vs_1sc --seed 1 \
+  --t_max 500000 --save_model_interval 100000
+```
+
+Adding more maps takes one ENV_MAP entry per new scenario — see the `smaclite_2s_vs_1sc` entry in `exp_train.py` for the shape (`env_config: smaclite`, `env_args: {map_name, time_limit, use_cpp_rvo2}`). Note: `exp_attack.py` and `exp_transfer.py` need matching ENV_MAP entries before evaluating SMAClite checkpoints.
+
+### Performance
+
+On the RTX 3060 with the default numpy RVO2 backend:
+
+- `2s_vs_1sc` (2 agents, smallest): **~33 env steps/sec** → t_max=500K ≈ 4 hours per cell
+- `2s3z` (5 agents): **~5.6 env steps/sec** → t_max=500K ≈ 25 hours per cell
+
+For comparison, MPE `simple_spread` runs at ~167 steps/sec. SMAClite is CPU-bound by the RVO2 collision-avoidance solver. The C++ RVO2 backend (`use_cpp_rvo2: True`) is reportedly 5–10× faster but requires Visual Studio Build Tools to compile on Windows — not currently used.
+
 ## Notes for collaborators
 
 - Results files (`epymarl/results/`, `results/`, `*.pth`) are **git-ignored** on purpose — we reproduce them from configs + seeds, not from stored artifacts.
-- The EPyMARL fork has two necessary patches for Windows/modern-dep compat:
-  - `epymarl/src/envs/__init__.py` — makes the `smaclite` import optional (we don't install SMAClite).
-  - `epymarl/src/run.py` — strips colons from the timestamp used in log directory names (invalid on Windows filesystems).
-  If you rebase onto upstream EPyMARL, re-apply these.
+- The EPyMARL fork has one Windows-compat patch:
+  - `epymarl/src/envs/__init__.py` — makes the `smaclite` import optional (so MPE-only runs don't require the SMAClite package even though we now install it for the SMAC stretch experiments).
+  Two earlier patches that redirected sacred output and tb_logs into per-cell directories were reverted to match the upstream-default layout that the kamen pipeline assumes.
+  If you rebase onto upstream EPyMARL, re-apply the optional-import patch.
 - **When running the shared-vs-independent ablation**, EPyMARL's default `_ns` configs also change `use_rnn` (and for IQL, `epsilon_anneal_time`) — these are confounds that must be equalized via sacred overrides. See `CLAUDE.md` → "Sharing toggle" for the exact per-algorithm override strategy.
 - Deadline is tight (9 days from 2026-04-21). See `CLAUDE.md` → "Implementation roadmap" for the day-by-day plan. Scope is **MPE only, 6 algorithms, 2 sharing modes, 3 attacks**; SMAC is a stretch goal, not budgeted for.
 
