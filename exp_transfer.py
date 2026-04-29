@@ -59,28 +59,30 @@ def main():
     parser.add_argument("--n_episodes", type=int,   default=50)
     args = parser.parse_args()
 
-    env_info_map = ENV_MAP[args.env]
-    env_key      = env_info_map["key"]
-    algo_config  = _get_epymarl_config(args.algo, args.sharing)
+    env_info_map  = ENV_MAP[args.env]
+    env_config    = env_info_map["env_config"]
+    env_args_dict = env_info_map["env_args"]
+    sacred_subdir = env_info_map["sacred_subdir"]
+    algo_config   = _get_epymarl_config(args.algo, args.sharing)
 
     ckpt_path = find_checkpoint(REPO_ROOT, args.env, args.algo, args.sharing, args.seed)
     print(f"Checkpoint: {ckpt_path}")
 
     config_dict = find_sacred_config(
-        REPO_ROOT, algo_config, env_key, args.seed,
+        REPO_ROOT, algo_config, sacred_subdir, args.seed,
         args.env, args.algo, args.sharing,
     )
     args_ns = SimpleNamespace(**config_dict)
     args_ns.device = "cuda" if th.cuda.is_available() else "cpu"
 
-    inner_env = env_REGISTRY["gymma"](
-        key=env_key,
-        time_limit=env_info_map["time_limit"],
-        seed=args.seed,
-        common_reward=args_ns.common_reward,
-        reward_scalarisation=args_ns.reward_scalarisation,
-        pretrained_wrapper=None,
-    )
+    common_kwargs = {
+        "seed": args.seed,
+        "common_reward": args_ns.common_reward,
+        "reward_scalarisation": args_ns.reward_scalarisation,
+    }
+    if env_config == "gymma":
+        common_kwargs["pretrained_wrapper"] = None
+    inner_env = env_REGISTRY[env_config](**common_kwargs, **env_args_dict)
     env_info = inner_env.get_env_info()
     args_ns.n_agents  = env_info["n_agents"]
     args_ns.n_actions = env_info["n_actions"]

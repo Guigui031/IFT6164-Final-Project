@@ -23,11 +23,20 @@ from envs import REGISTRY as env_REGISTRY
 from attacks.noise import no_attack, random_noise
 from wrappers.obs_perturb import ObsPerturbWrapper
 
+# env_args is the dict passed to the env_REGISTRY constructor; its shape varies
+# per env_config (gymma uses "key", smaclite uses "map_name"). sacred_subdir is
+# the second-level dir under epymarl/results/sacred/<algo_config>/ where Sacred
+# writes runs for this env.
 ENV_MAP = {
     "mpe_simple_spread": {
-        "key": "pz-mpe-simple-spread-v3",
-        "algo_config": {"shared": "mappo", "independent": "mappo_ns"},
-        "time_limit": 25,
+        "env_config":    "gymma",
+        "env_args":      {"key": "pz-mpe-simple-spread-v3", "time_limit": 25},
+        "sacred_subdir": "pz-mpe-simple-spread-v3",
+    },
+    "smaclite_2s_vs_1sc": {
+        "env_config":    "smaclite",
+        "env_args":      {"map_name": "2s_vs_1sc", "time_limit": 150, "use_cpp_rvo2": False},
+        "sacred_subdir": "2s_vs_1sc",
     },
 }
 
@@ -154,9 +163,11 @@ def main():
         parser.error(f"Missing required field(s): {', '.join(missing)} "
                      "(provide via --config YAML or CLI args)")
 
-    env_info_map = ENV_MAP[args.env]
-    env_key      = env_info_map["key"]
-    algo_config  = _get_epymarl_config(args.algo, args.sharing)
+    env_info_map  = ENV_MAP[args.env]
+    env_config    = env_info_map["env_config"]
+    env_args_dict = env_info_map["env_args"]
+    sacred_subdir = env_info_map["sacred_subdir"]
+    algo_config   = _get_epymarl_config(args.algo, args.sharing)
 
     # --- checkpoint ---
     ckpt_path = find_checkpoint(REPO_ROOT, args.env, args.algo, args.sharing, args.seed)
@@ -164,21 +175,21 @@ def main():
 
     # --- sacred config -> args namespace ---
     config_dict = find_sacred_config(
-        REPO_ROOT, algo_config, env_key, args.seed,
+        REPO_ROOT, algo_config, sacred_subdir, args.seed,
         args.env, args.algo, args.sharing,
     )
     args_ns = SimpleNamespace(**config_dict)
     args_ns.device = "cuda" if th.cuda.is_available() else "cpu"
 
     # --- inner env (no wrapper yet — need env_info before building MAC) ---
-    inner_env = env_REGISTRY["gymma"](
-        key=env_key,
-        time_limit=env_info_map["time_limit"],
-        seed=args.seed,
-        common_reward=args_ns.common_reward,
-        reward_scalarisation=args_ns.reward_scalarisation,
-        pretrained_wrapper=None,
-    )
+    common_kwargs = {
+        "seed": args.seed,
+        "common_reward": args_ns.common_reward,
+        "reward_scalarisation": args_ns.reward_scalarisation,
+    }
+    if env_config == "gymma":
+        common_kwargs["pretrained_wrapper"] = None
+    inner_env = env_REGISTRY[env_config](**common_kwargs, **env_args_dict)
     env_info = inner_env.get_env_info()
 
     # populate runtime fields not stored in Sacred config
