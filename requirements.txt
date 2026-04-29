@@ -1,4 +1,6 @@
 Using Python 3.10.20 environment at: C:\Users\guill\GitHub\IFT6164-Final-Project\.venv
+# Install torch/torchvision separately (CUDA wheels not on PyPI):
+#   uv pip install torch==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cu121
 absl-py==2.4.0
 attrs==26.1.0
 certifi==2026.4.22
@@ -55,7 +57,7 @@ requests==2.33.1
 sacred==0.8.7
 scipy==1.15.3
 seaborn==0.13.2
-setuptools==80.10.2
+setuptools<81  # sacred requires pkg_resources; newer setuptools drops it
 six==1.17.0
 sk-video==1.1.10
 smmap==5.0.3
@@ -65,8 +67,6 @@ tensorboard==2.20.0
 tensorboard-data-server==0.7.2
 tensorboard-logger==0.1.0
 tomli==2.4.1
-torch==2.2.2+cu121
-torchvision==0.17.2+cu121
 tornado==6.5.5
 typing-extensions==4.15.0
 tzdata==2026.1

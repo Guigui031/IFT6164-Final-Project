@@ -1,0 +1,13 @@
+# Clean baseline — protagonist runs unperturbed.
+# Use this to establish the no-attack reference return for plotting.
+
+env: mpe_simple_spread
+algo: mappo
+sharing: shared
+seed: 1
+
+attack: no_attack
+epsilon: 0.0
+n_episodes: 500
+
+sdor_ckpt: null

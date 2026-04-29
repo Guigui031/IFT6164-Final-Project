@@ -1,0 +1,11 @@
+env: mpe_simple_spread
+algo: mappo
+sharing: shared
+seed: 1
+
+attack: fgsm
+epsilon: 0.1
+n_episodes: 500
+
+# Only required for attack: sdor_stor (otherwise leave null)
+sdor_ckpt: null
