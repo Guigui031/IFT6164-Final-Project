@@ -50,13 +50,9 @@ def run(_run, _config, _log):
 
     args.unique_token = unique_token
     if args.use_tensorboard:
-        # Respect local_results_path override (absolute or relative to epymarl/).
-        if os.path.isabs(args.local_results_path):
-            tb_logs_direc = os.path.join(args.local_results_path, "tb_logs")
-        else:
-            tb_logs_direc = os.path.join(
-                dirname(dirname(abspath(__file__))), args.local_results_path, "tb_logs"
-            )
+        tb_logs_direc = os.path.join(
+            dirname(dirname(abspath(__file__))), "results", "tb_logs"
+        )
         tb_exp_direc = os.path.join(tb_logs_direc, "{}").format(unique_token)
         logger.setup_tb(tb_exp_direc)
 

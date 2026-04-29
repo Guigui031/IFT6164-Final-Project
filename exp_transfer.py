@@ -5,130 +5,147 @@ agent `source`'s gradient and applied only to agent `target`'s observation.
 Produces an N x N matrix of mean team return per (source, target) pair.
 
 Shared-parameter networks predict an almost-symmetric matrix with strong
-off-diagonal drops (one Q-function, one gradient landscape).  Independent
-networks predict strong diagonal drops (matches per-agent FGSM) but weak
-off-diagonals — a perturbation crafted from agent i's net shouldn't fool
-agent j's net.
+off-diagonal drops (one Q-function, one gradient landscape). Independent
+networks predict strong diagonal drops only (matches per-agent FGSM) but
+weak off-diagonals — a perturbation crafted from agent i's net shouldn't
+fool agent j's net.
 
 Usage (from repo root, venv active):
-
-    python exp_transfer.py --ckpt results/mpe_simple_spread/iql/shared/seed1 \
-                           --epsilon 0.1 --n_episodes 50
+    python exp_transfer.py --algo iql --sharing shared --env mpe_simple_spread \
+                           --seed 1 --epsilon 0.25 --n_episodes 50
 
 Output:
-    <ckpt>/transfer/eps<eps>/matrix.json   # N x N plus baseline
+    results/<env>/<algo>/<sharing>/seed<N>/transfer_eps<eps>.json
 """
-
-from __future__ import annotations
 
 import argparse
 import json
 import sys
-import time
+import warnings
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import torch as th
 
+warnings.filterwarnings("ignore")
+
 REPO_ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "epymarl" / "src"))
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from components.transforms import OneHot
+from controllers import REGISTRY as mac_REGISTRY
+from envs import REGISTRY as env_REGISTRY
+
+from wrappers.obs_perturb import ObsPerturbWrapper
+from attacks.fgsm_transfer import FGSMTransferAttack
+from attacks.noise import no_attack
 
 from exp_attack import (
-    build_env_mac, find_latest_model_dir, find_sacred_config,
-    load_args, rollout_one_episode,
+    ENV_MAP, find_checkpoint, find_sacred_config, run_episode,
+    _get_epymarl_config,
 )
-from src.attacks import FGSMTransferAttack, NoAttack
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--ckpt", required=True, type=Path)
-    p.add_argument("--epsilon", type=float, default=0.1)
-    p.add_argument("--n_episodes", type=int, default=50)
-    p.add_argument("--seed", type=int, default=12345)
-    p.add_argument("--out", type=Path, default=None)
-    args_cli = p.parse_args()
+    parser = argparse.ArgumentParser(description="Cross-agent FGSM transfer matrix")
+    parser.add_argument("--algo",       choices=["iql", "ippo", "mappo", "qmix", "vdn", "maddpg"],
+                        required=True)
+    parser.add_argument("--sharing",    choices=["shared", "independent"], required=True)
+    parser.add_argument("--env",        choices=list(ENV_MAP), required=True)
+    parser.add_argument("--seed",       type=int, required=True)
+    parser.add_argument("--epsilon",    type=float, default=0.25)
+    parser.add_argument("--n_episodes", type=int,   default=50)
+    args = parser.parse_args()
 
-    cfg_path = find_sacred_config(args_cli.ckpt)
-    args = load_args(cfg_path)
-    model_dir = find_latest_model_dir(args_cli.ckpt)
-    print(f"[transfer] cell = {args_cli.ckpt}")
-    print(f"[transfer] model = {model_dir}")
-    print(f"[transfer] epsilon = {args_cli.epsilon}  n_episodes = {args_cli.n_episodes}")
+    env_info_map = ENV_MAP[args.env]
+    env_key      = env_info_map["key"]
+    algo_config  = _get_epymarl_config(args.algo, args.sharing)
 
-    np.random.seed(args_cli.seed)
-    th.manual_seed(args_cli.seed)
-    args.seed = args_cli.seed
-    args.env_args["seed"] = args_cli.seed
-    args.evaluate = True
-    args.checkpoint_path = str(model_dir.parent)
-    args.load_step = int(model_dir.name)
-    args.test_nepisode = args_cli.n_episodes
-    args.test_interval = 1
-    args.log_interval = int(1e18)
-    args.runner_log_interval = int(1e18)
-    args.learner_log_interval = int(1e18)
-    args.save_model = False
-    args.use_tensorboard = False
+    ckpt_path = find_checkpoint(REPO_ROOT, args.env, args.algo, args.sharing, args.seed)
+    print(f"Checkpoint: {ckpt_path}")
 
-    runner, mac, learner, _, _, _ = build_env_mac(args)
-    learner.load_models(str(model_dir))
-    n_agents = args.n_agents
+    config_dict = find_sacred_config(
+        REPO_ROOT, algo_config, env_key, args.seed,
+        args.env, args.algo, args.sharing,
+    )
+    args_ns = SimpleNamespace(**config_dict)
+    args_ns.device = "cuda" if th.cuda.is_available() else "cpu"
 
-    def run_many(attack, n_eps):
-        returns = []
-        for _ in range(n_eps):
-            returns.append(rollout_one_episode(runner, mac, attack, args))
-        return returns
+    inner_env = env_REGISTRY["gymma"](
+        key=env_key,
+        time_limit=env_info_map["time_limit"],
+        seed=args.seed,
+        common_reward=args_ns.common_reward,
+        reward_scalarisation=args_ns.reward_scalarisation,
+        pretrained_wrapper=None,
+    )
+    env_info = inner_env.get_env_info()
+    args_ns.n_agents  = env_info["n_agents"]
+    args_ns.n_actions = env_info["n_actions"]
 
-    t0 = time.time()
-    baseline_returns = run_many(NoAttack(), args_cli.n_episodes)
+    scheme = {
+        "state":          {"vshape": env_info["state_shape"]},
+        "obs":            {"vshape": env_info["obs_shape"], "group": "agents"},
+        "actions":        {"vshape": (1,), "group": "agents", "dtype": th.long},
+        "avail_actions":  {"vshape": (env_info["n_actions"],), "group": "agents", "dtype": th.int},
+        "reward":         {"vshape": (1,)},
+        "terminated":     {"vshape": (1,), "dtype": th.uint8},
+        "actions_onehot": {"vshape": (env_info["n_actions"],), "group": "agents"},
+    }
+    groups     = {"agents": args_ns.n_agents}
+    preprocess = {"actions": ("actions_onehot", [OneHot(out_dim=args_ns.n_actions)])}
+
+    mac = mac_REGISTRY[args_ns.mac](scheme, groups, args_ns)
+    mac.load_models(str(ckpt_path))
+    if args_ns.device == "cuda":
+        mac.cuda()
+
+    n = args_ns.n_agents
+
+    env = ObsPerturbWrapper(inner_env, no_attack)
+    print(f"Running {args.n_episodes} clean episodes for baseline...")
+    baseline_returns = [run_episode(env, mac, scheme, groups, preprocess, args_ns)
+                        for _ in range(args.n_episodes)]
     baseline_mean = float(np.mean(baseline_returns))
-    print(f"[transfer] baseline (no attack) mean = {baseline_mean:.3f}")
+    print(f"  baseline mean return = {baseline_mean:.3f}")
 
-    matrix = np.zeros((n_agents, n_agents), dtype=float)
-    per_cell_returns: list[list[list[float]]] = [[[] for _ in range(n_agents)] for _ in range(n_agents)]
-    for s in range(n_agents):
-        for t in range(n_agents):
-            atk = FGSMTransferAttack(epsilon=args_cli.epsilon, source_agent=s, target_agent=t)
-            returns = run_many(atk, args_cli.n_episodes)
+    matrix = np.zeros((n, n), dtype=float)
+    per_cell_returns = [[[] for _ in range(n)] for _ in range(n)]
+    for s in range(n):
+        for t in range(n):
+            attack_fn = FGSMTransferAttack(mac, args_ns, args.epsilon, s, t, args_ns.device)
+            env = ObsPerturbWrapper(inner_env, attack_fn)
+            returns = [run_episode(env, mac, scheme, groups, preprocess, args_ns)
+                       for _ in range(args.n_episodes)]
             matrix[s, t] = float(np.mean(returns))
             per_cell_returns[s][t] = returns
-            print(f"[transfer]  source={s} -> target={t}  mean_return = {matrix[s, t]:.3f}  (drop vs clean = {baseline_mean - matrix[s, t]:+.3f})")
+            print(f"  source={s} -> target={t}  mean={matrix[s, t]:.3f}  "
+                  f"(drop = {baseline_mean - matrix[s, t]:+.3f})")
 
-    elapsed = time.time() - t0
-
-    out_dir = args_cli.out or (args_cli.ckpt / "transfer" / f"eps{args_cli.epsilon}")
-    out_dir.mkdir(parents=True, exist_ok=True)
     result = {
-        "ckpt": str(args_cli.ckpt),
-        "epsilon": args_cli.epsilon,
-        "n_episodes": args_cli.n_episodes,
-        "seed": args_cli.seed,
-        "n_agents": n_agents,
+        "algo": args.algo, "sharing": args.sharing,
+        "env": args.env, "seed": args.seed,
+        "epsilon": args.epsilon, "n_episodes": args.n_episodes,
+        "n_agents": n,
         "baseline_mean": baseline_mean,
         "baseline_returns": baseline_returns,
-        "matrix": matrix.tolist(),           # [source][target] = mean_return
-        "returns": per_cell_returns,         # [source][target] = list of ep returns
-        "model_step": int(model_dir.name),
-        "elapsed_sec": elapsed,
+        "matrix": matrix.tolist(),
+        "returns": per_cell_returns,
+        "checkpoint_timestep": int(ckpt_path.name),
     }
-    with open(out_dir / "matrix.json", "w") as f:
-        json.dump(result, f, indent=2)
-    print(f"[transfer] wrote {out_dir / 'matrix.json'} ({elapsed:.1f}s)")
+    out_dir  = REPO_ROOT / "results" / args.env / args.algo / args.sharing / f"seed{args.seed}"
+    out_path = out_dir / f"transfer_eps{args.epsilon}.json"
+    out_path.write_text(json.dumps(result, indent=2))
+    print(f"\nSaved -> {out_path}")
 
-    # Pretty-print summary.
-    print("\n[transfer] matrix of mean returns (rows=source, cols=target):")
-    header = "       " + "  ".join(f"t={t:2d}" for t in range(n_agents))
-    print(header)
-    for s in range(n_agents):
-        row = " ".join(f"{matrix[s, t]:7.2f}" for t in range(n_agents))
+    print("\nTransfer matrix (rows=source, cols=target):")
+    for s in range(n):
+        row = " ".join(f"{matrix[s, t]:7.2f}" for t in range(n))
         print(f"s={s}: {row}")
     print(f"baseline (clean) = {baseline_mean:.3f}")
 
-    runner.close_env()
-    return 0
-
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

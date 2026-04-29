@@ -32,13 +32,16 @@ for seed in $SEEDS; do
     for sharing in "${SHARINGS[@]}"; do
       i=$((i+1))
       out="results/mpe_simple_spread/$algo/$sharing/seed$seed"
-      ckpt_glob="$out/epymarl/models/*/$T_MAX/agent.th"
+      # Skip if ANY checkpoint exists — exp_train.py's own _find_checkpoint uses
+      # the same lenient rule. Note: EPyMARL saves at multiples of
+      # save_model_interval, so the final step may not equal T_MAX exactly.
+      ckpt_glob="$out/models/*/*/agent.th"
       if compgen -G "$ckpt_glob" > /dev/null; then
         echo "[sweep $i/$total] SKIP $algo $sharing seed=$seed (checkpoint at step $T_MAX already exists)"
         continue
       fi
       echo "[sweep $i/$total] RUN  $algo $sharing seed=$seed t_max=$T_MAX"
-      "$VENV_PY" exp_train.py --algo "$algo" --sharing "$sharing" --seed "$seed" --t_max "$T_MAX" \
+      "$VENV_PY" exp_train.py --algo "$algo" --sharing "$sharing" --env mpe_simple_spread --seed "$seed" --t_max "$T_MAX" \
         || { echo "[sweep $i/$total] FAILED $algo $sharing seed=$seed — continuing to next cell"; }
     done
   done

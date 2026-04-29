@@ -1,284 +1,242 @@
-"""Load a trained EPyMARL checkpoint and evaluate it under an observation attack.
-
-Usage (from repo root, venv active):
-
-    python exp_attack.py --ckpt results/mpe_simple_spread/iql/shared/seed1 \
-                         --attack random --epsilon 0.1 --n_episodes 100
-
-Outputs:
-    <ckpt>/attacks/<attack>_eps<eps>/metrics.json
-
-The rollout loop is a re-implementation of EpisodeRunner.run() that injects
-the attack on the raw per-agent observation tuple before it is written into
-the episode batch. Everything downstream (MAC forward, action selection,
-env.step) sees only the perturbed observation.
-"""
-
-from __future__ import annotations
-
 import argparse
 import json
-import os
 import sys
-import time
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import torch as th
+import yaml
+
+warnings.filterwarnings("ignore")
 
 REPO_ROOT = Path(__file__).resolve().parent
-EPYMARL_SRC = REPO_ROOT / "epymarl" / "src"
-sys.path.insert(0, str(EPYMARL_SRC))
-# epymarl's modules do `from envs import REGISTRY` etc., so epymarl/src must be on sys.path
-# even though we use its packages as epymarl.src in our repo layout.
+sys.path.insert(0, str(REPO_ROOT / "epymarl" / "src"))
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
-# Import EPyMARL pieces (require sys.path tweak above).
-from components.episode_buffer import ReplayBuffer  # noqa: E402
-from components.transforms import OneHot  # noqa: E402
-from controllers import REGISTRY as mac_REGISTRY  # noqa: E402
-from learners import REGISTRY as le_REGISTRY  # noqa: E402
-from runners import REGISTRY as r_REGISTRY  # noqa: E402
-from utils.logging import get_logger  # noqa: E402
+from components.episode_buffer import EpisodeBatch
+from components.transforms import OneHot
+from controllers import REGISTRY as mac_REGISTRY
+from envs import REGISTRY as env_REGISTRY
 
-# Our attacks live outside epymarl/.
-sys.path.insert(0, str(REPO_ROOT))
-from src.attacks import get_attack  # noqa: E402
+from attacks.noise import no_attack, random_noise
+from wrappers.obs_perturb import ObsPerturbWrapper
 
-
-def find_sacred_config(ckpt_dir: Path) -> Path:
-    """Sacred writes one config.json per run at .../sacred/<algo>/<map>/<run_id>/config.json."""
-    candidates = list((ckpt_dir / "epymarl" / "sacred").glob("*/*/*/config.json"))
-    if not candidates:
-        raise FileNotFoundError(f"No sacred config.json under {ckpt_dir}/epymarl/sacred/")
-    # If multiple sacred runs exist, take the one with the largest run_id.
-    candidates.sort(key=lambda p: int(p.parent.name))
-    return candidates[-1]
+ENV_MAP = {
+    "mpe_simple_spread": {
+        "key": "pz-mpe-simple-spread-v3",
+        "algo_config": {"shared": "mappo", "independent": "mappo_ns"},
+        "time_limit": 25,
+    },
+}
 
 
-def find_latest_model_dir(ckpt_dir: Path) -> Path:
-    """EPyMARL saves under .../models/<unique_token>/<step>/agent.th. Return the dir of the
-    largest step across all unique_tokens under this cell."""
-    model_roots = list((ckpt_dir / "epymarl" / "models").glob("*"))
-    if not model_roots:
-        raise FileNotFoundError(f"No models/ dir under {ckpt_dir}/epymarl/")
-    best = None
-    for root in model_roots:
-        for step_dir in root.iterdir():
-            if step_dir.is_dir() and step_dir.name.isdigit():
-                step = int(step_dir.name)
-                if best is None or step > best[0]:
-                    best = (step, step_dir)
-    if best is None:
-        raise FileNotFoundError(f"No step dirs under {ckpt_dir}/epymarl/models/*")
-    return best[1]
+def _get_epymarl_config(algo: str, sharing: str) -> str:
+    if algo == "maddpg":
+        return "maddpg_ns"
+    return algo if sharing == "shared" else f"{algo}_ns"
 
 
-def load_args(config_path: Path) -> SimpleNamespace:
-    with open(config_path) as f:
-        cfg = json.load(f)
-    return SimpleNamespace(**cfg)
+def build_attack(name, epsilon, mac, args_ns, device, sdor_ckpt=None):
+    if name == "no_attack":
+        return no_attack
+    if name == "random_noise":
+        return lambda obs: random_noise(obs, epsilon)
+    if name == "fgsm":
+        from attacks.fgsm import FGSMAttack
+        return FGSMAttack(mac, args_ns, epsilon, device)
+    if name == "sdor_stor":
+        if sdor_ckpt is None:
+            raise ValueError("--sdor_ckpt is required for sdor_stor attack")
+        from attacks.sdor import SDorAgent
+        from attacks.sdor_stor import SDorSTorAttack
+        sdor = SDorAgent.load(sdor_ckpt, device=device)
+        return SDorSTorAttack(sdor, mac, args_ns, epsilon, device)
+    raise ValueError(f"Unknown attack: {name}")
 
 
-def build_env_mac(args: SimpleNamespace):
-    """Instantiate runner, scheme, mac mirroring run_sequential() from epymarl/src/run.py."""
-    # EPyMARL's config.json doesn't include `device`; run.py sets it at runtime.
-    if not hasattr(args, "device"):
-        args.device = "cuda" if args.use_cuda and th.cuda.is_available() else "cpu"
+def find_checkpoint(repo_root, env, algo, sharing, seed):
+    models_root = repo_root / "results" / env / algo / sharing / f"seed{seed}" / "models"
+    # structure: models/<unique_token>/<timestep>/agent.th  (two levels deep)
+    valid = [
+        p.parent for p in models_root.glob("**/agent.th")
+        if p.parent.name.isdigit()
+    ]
+    if not valid:
+        raise FileNotFoundError(f"No checkpoint found under {models_root}")
+    return max(valid, key=lambda p: int(p.name))
 
-    logger = get_logger()
-    # Silence EPyMARL's chatty logger for attack eval.
-    import logging
-    logger.setLevel(logging.WARNING)
 
-    # Runner needs a logger with .log_stat etc. — but we just want the env out of it, so
-    # construct a minimal logger-like object. The EPyMARL logger module has a Logger
-    # class; easier to use the real one without observers.
-    from utils.logging import Logger
-    runner_logger = Logger(logger)
+def find_sacred_config(repo_root, algo_config, env_key, seed, env, algo, sharing):
+    sacred_dir = repo_root / "epymarl" / "results" / "sacred" / algo_config / env_key
+    expected_suffix = f"{env}/{algo}/{sharing}/seed{seed}"
+    matches = []
+    for cfg_path in sacred_dir.glob("*/config.json"):
+        cfg = json.loads(cfg_path.read_text())
+        local = cfg.get("local_results_path", "").replace("\\", "/")
+        if cfg.get("seed") == seed and local.endswith(expected_suffix):
+            matches.append((int(cfg_path.parent.name), cfg))
+    if not matches:
+        raise FileNotFoundError(
+            f"No Sacred config found for seed={seed}, sharing={sharing} in {sacred_dir}"
+        )
+    _, config_dict = max(matches, key=lambda x: x[0])
+    return config_dict
 
-    # Build runner (gives us env_info for scheme).
-    runner = r_REGISTRY[args.runner](args=args, logger=runner_logger)
-    env_info = runner.get_env_info()
-    args.n_agents = env_info["n_agents"]
-    args.n_actions = env_info["n_actions"]
-    args.state_shape = env_info["state_shape"]
 
-    scheme = {
-        "state": {"vshape": env_info["state_shape"]},
-        "obs": {"vshape": env_info["obs_shape"], "group": "agents"},
-        "actions": {"vshape": (1,), "group": "agents", "dtype": th.long},
-        "avail_actions": {"vshape": (env_info["n_actions"],), "group": "agents", "dtype": th.int},
-        "terminated": {"vshape": (1,), "dtype": th.uint8},
-    }
-    if args.common_reward:
-        scheme["reward"] = {"vshape": (1,)}
-    else:
-        scheme["reward"] = {"vshape": (args.n_agents,)}
-    groups = {"agents": args.n_agents}
-    preprocess = {"actions": ("actions_onehot", [OneHot(out_dim=args.n_actions)])}
-
-    buffer = ReplayBuffer(
-        scheme, groups, args.buffer_size,
-        env_info["episode_limit"] + 1,
+def run_episode(env, mac, scheme, groups, preprocess, args_ns):
+    episode_limit = env.get_env_info()["episode_limit"]
+    batch = EpisodeBatch(
+        scheme, groups, batch_size=1,
+        max_seq_length=episode_limit + 1,
         preprocess=preprocess,
-        device="cpu" if args.buffer_cpu_only else args.device,
+        device=args_ns.device,
     )
+    mac.init_hidden(batch_size=1)
+    env.reset()
 
-    mac = mac_REGISTRY[args.mac](buffer.scheme, groups, args)
-    runner.setup(scheme=scheme, groups=groups, preprocess=preprocess, mac=mac)
-
-    learner = le_REGISTRY[args.learner](mac, buffer.scheme, runner_logger, args)
-
-    if args.use_cuda and th.cuda.is_available():
-        learner.cuda()
-
-    return runner, mac, learner, scheme, groups, preprocess
-
-
-def rollout_one_episode(runner, mac, attack, args) -> float:
-    """Re-implementation of EpisodeRunner.run(test_mode=True) with attack injection.
-
-    Differences from upstream:
-      * Uses attack.perturb(obs_stack, ctx) on the raw per-agent observations
-        before writing them into the episode batch.
-      * Returns the episode return scalar instead of the episode batch + stats.
-    """
-    runner.reset()
-    mac.init_hidden(batch_size=runner.batch_size)
-    episode_return = 0.0 if args.common_reward else np.zeros(args.n_agents)
-    t = 0
-    terminated = False
-
+    ep_return, terminated, t = 0.0, False, 0
     while not terminated:
-        # Stack raw per-agent obs -> [n_agents, obs_dim].
-        raw_obs = runner.env.get_obs()
-        obs_stack = np.stack([np.asarray(o, dtype=np.float32) for o in raw_obs])
-
-        # Build FGSM context (prev actions onehot for obs_last_action envs).
-        prev_onehot = None
-        if getattr(args, "obs_last_action", False) and t > 0:
-            prev_onehot = runner.batch["actions_onehot"][:, t - 1]
-
-        obs_stack = attack.perturb(obs_stack, ctx={
-            "mac": mac,
-            "prev_actions_onehot": prev_onehot,
-            "t": t,
-        })
-        perturbed_obs = tuple(obs_stack[i] for i in range(args.n_agents))
-
-        pre = {
-            "state": [runner.env.get_state()],
-            "avail_actions": [runner.env.get_avail_actions()],
-            "obs": [perturbed_obs],
-        }
-        runner.batch.update(pre, ts=t)
-
-        actions = mac.select_actions(runner.batch, t_ep=t, t_env=0, test_mode=True)
-        _, reward, terminated, truncated, env_info = runner.env.step(actions[0])
-        terminated = terminated or truncated
-        episode_return += reward
-
-        post = {
-            "actions": actions,
-            "terminated": [(terminated != env_info.get("episode_limit", False),)],
-        }
-        if args.common_reward:
-            post["reward"] = [(reward,)]
-        else:
-            post["reward"] = [tuple(reward)]
-        runner.batch.update(post, ts=t)
+        batch.update({
+            "state":         [env.get_state()],
+            "avail_actions": [env.get_avail_actions()],
+            "obs":           [env.get_obs()],
+        }, ts=t)
+        actions = mac.select_actions(batch, t_ep=t, t_env=0, test_mode=True)
+        _, reward, done, truncated, _ = env.step(actions[0].cpu().numpy())
+        terminated = bool(done) or bool(truncated)
+        batch.update({
+            "actions":    actions,
+            "reward":     [[reward]],
+            "terminated": [[terminated]],
+        }, ts=t)
+        ep_return += reward
         t += 1
-
-    return float(episode_return) if args.common_reward else episode_return.tolist()
+    return ep_return
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--ckpt", required=True, type=Path,
-                   help="Cell dir, e.g. results/mpe_simple_spread/iql/shared/seed1")
-    p.add_argument("--attack", required=True, choices=["none", "random", "fgsm"])
-    p.add_argument("--epsilon", type=float, default=0.1)
-    p.add_argument("--n_episodes", type=int, default=100)
-    p.add_argument("--seed", type=int, default=12345, help="RNG seed for attack + env")
-    p.add_argument("--out", type=Path, default=None,
-                   help="Output dir. Default: <ckpt>/attacks/<attack>_eps<eps>/")
-    args_cli = p.parse_args()
+    parser = argparse.ArgumentParser(description="Evaluate a checkpoint under observation attack")
+    parser.add_argument("--config",     type=Path, default=None,
+                        help="Path to attack YAML (alternative to CLI args)")
+    parser.add_argument("--algo",       choices=["iql", "ippo", "mappo", "qmix", "vdn", "maddpg"])
+    parser.add_argument("--sharing",    choices=["shared", "independent"])
+    parser.add_argument("--env",        choices=list(ENV_MAP))
+    parser.add_argument("--seed",       type=int)
+    parser.add_argument("--attack",     choices=["no_attack", "random_noise", "fgsm", "sdor_stor"])
+    parser.add_argument("--epsilon",    type=float, default=None)
+    parser.add_argument("--n_episodes", type=int,   default=None)
+    parser.add_argument("--sdor_ckpt",  default=None,
+                        help="Path to trained SDor checkpoint dir (required for sdor_stor)")
+    args = parser.parse_args()
 
-    # Load training config snapshot.
-    cfg_path = find_sacred_config(args_cli.ckpt)
-    args = load_args(cfg_path)
-    model_dir = find_latest_model_dir(args_cli.ckpt)
-    print(f"[attack] cell = {args_cli.ckpt}")
-    print(f"[attack] config = {cfg_path}")
-    print(f"[attack] model = {model_dir}")
-    print(f"[attack] attack = {args_cli.attack}  epsilon = {args_cli.epsilon}  n_episodes = {args_cli.n_episodes}")
+    # If --config is given, load YAML and fill in any args not set on CLI.
+    # CLI args take precedence; YAML fills the gaps.
+    if args.config is not None:
+        if not args.config.exists():
+            parser.error(f"Attack YAML not found: {args.config}")
+        with open(args.config) as f:
+            cfg = yaml.safe_load(f)
+        for key in ("algo", "sharing", "env", "seed", "attack",
+                    "epsilon", "n_episodes", "sdor_ckpt"):
+            if getattr(args, key) is None and key in cfg:
+                setattr(args, key, cfg[key])
 
-    # Seed RNGs.
-    np.random.seed(args_cli.seed)
-    th.manual_seed(args_cli.seed)
-    args.seed = args_cli.seed
-    args.env_args["seed"] = args_cli.seed
-    args.evaluate = True
-    args.checkpoint_path = str(model_dir.parent)  # unique_token dir
-    args.load_step = int(model_dir.name)
-    # Override t_max to 0 so run_sequential's training loop is skipped — but we don't call
-    # run_sequential; we drive the rollout ourselves. Just normalize fields the runner reads.
-    args.test_nepisode = args_cli.n_episodes
-    args.test_interval = 1
-    args.log_interval = int(1e18)
-    args.runner_log_interval = int(1e18)
-    args.learner_log_interval = int(1e18)
-    args.save_model = False
-    args.use_tensorboard = False
+    # Apply defaults for anything still unset (after CLI + YAML)
+    if args.epsilon    is None: args.epsilon    = 0.0
+    if args.n_episodes is None: args.n_episodes = 100
 
-    # Build env + mac + learner, load weights.
-    runner, mac, learner, scheme, groups, preprocess = build_env_mac(args)
-    learner.load_models(str(model_dir))
+    # Validate required fields
+    missing = [k for k in ("algo", "sharing", "env", "seed", "attack")
+               if getattr(args, k) is None]
+    if missing:
+        parser.error(f"Missing required field(s): {', '.join(missing)} "
+                     "(provide via --config YAML or CLI args)")
 
-    # Build attack.
-    attack = get_attack(args_cli.attack, **({"epsilon": args_cli.epsilon}
-                                            if args_cli.attack != "none" else {}))
+    env_info_map = ENV_MAP[args.env]
+    env_key      = env_info_map["key"]
+    algo_config  = _get_epymarl_config(args.algo, args.sharing)
 
-    # Rollout.
-    t0 = time.time()
-    returns = []
-    for ep in range(args_cli.n_episodes):
-        r = rollout_one_episode(runner, mac, attack, args)
-        returns.append(r)
-    elapsed = time.time() - t0
+    # --- checkpoint ---
+    ckpt_path = find_checkpoint(REPO_ROOT, args.env, args.algo, args.sharing, args.seed)
+    print(f"Checkpoint: {ckpt_path}")
 
-    # Summary stats.
-    if args.common_reward:
-        mean = float(np.mean(returns))
-        std = float(np.std(returns))
-    else:
-        arr = np.asarray(returns)  # [n_episodes, n_agents]
-        mean = arr.mean(axis=0).tolist()
-        std = arr.std(axis=0).tolist()
+    # --- sacred config -> args namespace ---
+    config_dict = find_sacred_config(
+        REPO_ROOT, algo_config, env_key, args.seed,
+        args.env, args.algo, args.sharing,
+    )
+    args_ns = SimpleNamespace(**config_dict)
+    args_ns.device = "cuda" if th.cuda.is_available() else "cpu"
 
-    out_dir = args_cli.out or (args_cli.ckpt / "attacks" / f"{args_cli.attack}_eps{args_cli.epsilon}")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    metrics = {
-        "attack": args_cli.attack,
-        "epsilon": args_cli.epsilon,
-        "n_episodes": args_cli.n_episodes,
-        "seed": args_cli.seed,
-        "return_mean": mean,
-        "return_std": std,
-        "returns": returns,
-        "elapsed_sec": elapsed,
-        "ckpt": str(args_cli.ckpt),
-        "model_step": int(model_dir.name),
+    # --- inner env (no wrapper yet — need env_info before building MAC) ---
+    inner_env = env_REGISTRY["gymma"](
+        key=env_key,
+        time_limit=env_info_map["time_limit"],
+        seed=args.seed,
+        common_reward=args_ns.common_reward,
+        reward_scalarisation=args_ns.reward_scalarisation,
+        pretrained_wrapper=None,
+    )
+    env_info = inner_env.get_env_info()
+
+    # populate runtime fields not stored in Sacred config
+    args_ns.n_agents  = env_info["n_agents"]
+    args_ns.n_actions = env_info["n_actions"]
+
+    # --- scheme / groups / MAC ---
+    scheme = {
+        "state":          {"vshape": env_info["state_shape"]},
+        "obs":            {"vshape": env_info["obs_shape"], "group": "agents"},
+        "actions":        {"vshape": (1,), "group": "agents", "dtype": th.long},
+        "avail_actions":  {"vshape": (env_info["n_actions"],), "group": "agents", "dtype": th.int},
+        "reward":         {"vshape": (1,)},
+        "terminated":     {"vshape": (1,), "dtype": th.uint8},
+        "actions_onehot": {"vshape": (env_info["n_actions"],), "group": "agents"},
     }
-    with open(out_dir / "metrics.json", "w") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"[attack] return_mean = {mean}  return_std = {std}  ({args_cli.n_episodes} eps in {elapsed:.1f}s)")
-    print(f"[attack] wrote {out_dir / 'metrics.json'}")
+    groups     = {"agents": args_ns.n_agents}
+    preprocess = {"actions": ("actions_onehot", [OneHot(out_dim=args_ns.n_actions)])}
 
-    runner.close_env()
-    return 0
+    mac = mac_REGISTRY[args_ns.mac](scheme, groups, args_ns)
+    mac.load_models(str(ckpt_path))
+    if args_ns.device == "cuda":
+        mac.cuda()
+
+    # --- build attack + wrap env (FGSM/SDor need MAC reference) ---
+    attack_fn = build_attack(
+        args.attack, args.epsilon, mac, args_ns, args_ns.device,
+        sdor_ckpt=args.sdor_ckpt,
+    )
+    env = ObsPerturbWrapper(inner_env, attack_fn)
+
+    # --- eval loop ---
+    print(f"Running {args.n_episodes} episodes | attack={args.attack} epsilon={args.epsilon}")
+    returns = []
+    for ep in range(args.n_episodes):
+        r = run_episode(env, mac, scheme, groups, preprocess, args_ns)
+        returns.append(r)
+        if (ep + 1) % 10 == 0:
+            print(f"  [{ep+1}/{args.n_episodes}] running mean={np.mean(returns):.2f}")
+
+    mean_r = float(np.mean(returns))
+    std_r  = float(np.std(returns))
+    print(f"\nMean return: {mean_r:.2f} +/- {std_r:.2f}")
+
+    # --- save ---
+    result = {
+        "algo": args.algo, "sharing": args.sharing,
+        "env": args.env, "seed": args.seed,
+        "attack": args.attack, "epsilon": args.epsilon,
+        "n_episodes": args.n_episodes,
+        "mean_return": mean_r, "std_return": std_r,
+        "checkpoint_timestep": int(ckpt_path.name),
+    }
+    out_dir = REPO_ROOT / "results" / args.env / args.algo / args.sharing / f"seed{args.seed}"
+    out_path = out_dir / f"attack_{args.attack}_eps{args.epsilon}.json"
+    out_path.write_text(json.dumps(result, indent=2))
+    print(f"Saved -> {out_path}")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
