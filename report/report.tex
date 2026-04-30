@@ -286,14 +286,14 @@ Table~\ref{tab:transfer} reports the diagonal mean (self-attack), off-diagonal m
 % TODO: Interpret your results.
 % Idea bullets:
 \begin{itemize}
-  \item main verdict: 4/5 transfer ratios go down when going shared -> indep. iql $0.46 \to 0.23$, ippo $0.74 \to 0.55$, mappo $0.81 \to 0.51$, qmix $0.37 \to 0.13$. vdn is the weird one ($0.20 \to 0.30$, gap ~0.10, prob seed noise)
+  \item main verdict: 4/5 transfer ratios go down when going shared -> indep. iql $0.46 \to 0.23$, ippo $0.77 \to 0.52$, mappo $0.89 \to 0.65$, qmix $0.37 \to 0.13$. vdn is the weird one ($0.20 \to 0.30$, gap ~0.10, prob seed noise)
   \item qmix = cleanest result. 3x transfer ratio drop, fgsm drop also 1.5x bigger under sharing (28.9 vs 19.7), sdor agrees direction (-5.6 indep-shared)
   \item mixer thing: qmix and vdn have huge fgsm drops regardless of sharing (19-29 units) bc the mixer concentrates gradient. what sharing actually changes is the OFF-diag drop (qmix $3.33 \to 0.70$). mixer makes vdec methods globally attackable, indep just localises where the damage lands
-  \item ippo/mappo: highest baseline transfer ratios under sharing (0.74, 0.81), drop to 0.51-0.55 under indep. but per-cell fgsm drops basically the same (~10 units). so the effect shows up in transfer ratio, not aggregate drop
+  \item ippo/mappo: highest baseline transfer ratios under sharing (0.77, 0.89), drop to 0.52-0.65 under indep. but per-cell fgsm drops basically the same (~10 units). so the effect shows up in transfer ratio, not aggregate drop
   \item clean-vs-robust tradeoff: qmix pays a real cost (-47.2 -> -53.7, 14\% relative drop). ippo/mappo no tradeoff at all - indep just better on clean AND attacked. so cost of indep is task/algo specific, not universal
   \item iql + vdn exceptions: iql fgsm-delta is +2.4 (indep slightly worse on raw drop) but transfer ratio still supports ($0.46 \to 0.23$), prob a return-scale artefact. vdn 0.10 transfer ratio inversion is the only real counter, but at $n=3$ seeds it's plausibly noise
   \item cross-env: smaclite qmix $0.65 \to 0.61$ same direction smaller gap. either undertrained (1M of paper's 4M) or the gap is genuinely smaller on a diff env family
-  \item 2m mappo control rules out undertraining as cause - same numbers within seed noise (app~\ref{app:convergence-control})
+  \item 2m mappo control mostly rules out undertraining as cause - clean / random / fgsm match within seed noise. transfer ratio drifts a bit (0.89 -> 0.95) but small enough at $n=3$ to plausibly be noise (app~\ref{app:convergence-control})
   \item limitations: 3 seeds, one mpe config (3 homog agents), single-step grad attack, eval-time only (no adv training), no maddpg / continuous, one smaclite map
 \end{itemize}
 
