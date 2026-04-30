@@ -13,7 +13,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 REPO_ROOT="$PWD"
-VENV_PY="$REPO_ROOT/.venv/Scripts/python.exe"
+if   [[ -f "$REPO_ROOT/.venv/Scripts/python.exe" ]]; then VENV_PY="$REPO_ROOT/.venv/Scripts/python.exe"
+elif [[ -f "$REPO_ROOT/venv/Scripts/python.exe"  ]]; then VENV_PY="$REPO_ROOT/venv/Scripts/python.exe"
+elif [[ -f "$REPO_ROOT/.venv/bin/python"         ]]; then VENV_PY="$REPO_ROOT/.venv/bin/python"
+elif [[ -f "$REPO_ROOT/venv/bin/python"          ]]; then VENV_PY="$REPO_ROOT/venv/bin/python"
+elif command -v python >/dev/null 2>&1;            then VENV_PY="$(command -v python)"
+else echo "ERROR: no python interpreter found"; exit 1
+fi
 
 ALGOS=(iql ippo mappo qmix vdn)
 SHARINGS=(shared independent)

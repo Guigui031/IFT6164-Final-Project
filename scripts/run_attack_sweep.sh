@@ -12,7 +12,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 REPO_ROOT="$PWD"
-VENV_PY="$REPO_ROOT/.venv/Scripts/python.exe"
+if   [[ -f "$REPO_ROOT/.venv/Scripts/python.exe" ]]; then VENV_PY="$REPO_ROOT/.venv/Scripts/python.exe"
+elif [[ -f "$REPO_ROOT/venv/Scripts/python.exe"  ]]; then VENV_PY="$REPO_ROOT/venv/Scripts/python.exe"
+elif [[ -f "$REPO_ROOT/.venv/bin/python"         ]]; then VENV_PY="$REPO_ROOT/.venv/bin/python"
+elif [[ -f "$REPO_ROOT/venv/bin/python"          ]]; then VENV_PY="$REPO_ROOT/venv/bin/python"
+elif command -v python >/dev/null 2>&1;            then VENV_PY="$(command -v python)"
+else echo "ERROR: no python interpreter found"; exit 1
+fi
 
 ALGOS=(iql ippo mappo qmix vdn)
 SHARINGS=(shared independent)
@@ -21,11 +27,11 @@ EPSILONS="${EPSILONS:-0.05 0.1 0.25 0.5}"
 N_EPISODES="${N_EPISODES:-100}"
 ENV="${ENV:-mpe_simple_spread}"
 
-# Number of runs: (#cells) * (1 for no_attack + 2 attacks * #eps)
+# Number of runs: (#cells) * (1 for no_attack + 3 attacks * #eps)
 count_eps=0; for _ in $EPSILONS; do count_eps=$((count_eps+1)); done
 count_cells=0
 for _ in $SEEDS; do for _ in "${ALGOS[@]}"; do for _ in "${SHARINGS[@]}"; do count_cells=$((count_cells+1)); done; done; done
-total=$(( count_cells * (1 + 2 * count_eps) ))
+total=$(( count_cells * (1 + 3 * count_eps) ))
 
 echo "[attack-sweep] env=$ENV cells=$count_cells epsilons='$EPSILONS' n_episodes=$N_EPISODES total=$total"
 
@@ -48,7 +54,7 @@ for seed in $SEEDS; do
           > /dev/null || echo "  FAILED (no_attack) — continuing with this cell's attacks anyway"
       fi
 
-      for atk in random_noise fgsm; do
+      for atk in random_noise fgsm sdor_stor; do
         for eps in $EPSILONS; do
           i=$((i+1))
           out="$cell/attack_${atk}_eps${eps}.json"
@@ -56,9 +62,22 @@ for seed in $SEEDS; do
             echo "[attack-sweep $i/$total] SKIP $algo $sharing seed=$seed $atk eps=$eps"
             continue
           fi
+
+          # sdor_stor needs the SDor checkpoint trained against this algo's
+          # shared protagonist (Option B: same SDor for shared & independent).
+          extra_args=()
+          if [[ "$atk" == "sdor_stor" ]]; then
+            sdor_dir="results/sdor/$ENV/$algo/shared/seed$seed"
+            if [[ ! -f "$sdor_dir/sdor.pt" ]]; then
+              echo "[attack-sweep $i/$total] WAIT $algo $sharing seed=$seed $atk eps=$eps (no SDor checkpoint)"
+              continue
+            fi
+            extra_args=(--sdor_ckpt "$sdor_dir")
+          fi
+
           echo "[attack-sweep $i/$total] RUN  $algo $sharing seed=$seed $atk eps=$eps"
           "$VENV_PY" exp_attack.py --algo "$algo" --sharing "$sharing" --env "$ENV" --seed "$seed" \
-            --attack "$atk" --epsilon "$eps" --n_episodes "$N_EPISODES" \
+            --attack "$atk" --epsilon "$eps" --n_episodes "$N_EPISODES" "${extra_args[@]}" \
             > /dev/null || { echo "  FAILED"; continue; }
         done
       done

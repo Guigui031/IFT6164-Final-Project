@@ -187,6 +187,43 @@ python exp_aggregate.py
 
 Reads every `attack_*.json` and `transfer_*.json` under `results/`, writes the LaTeX tables + summary figures into `figures/`. Re-run after any new sweep.
 
+### 8. Run the whole pipeline end-to-end (overnight)
+
+All four sweep scripts and the aggregator chained together with `&&`, so each stage only runs if the previous succeeded. The `ENV` env var picks the environment — defaults to `mpe_simple_spread`, override to run on a different one.
+
+**Run from `bash` / `git-bash`** (PowerShell does not understand `&&` chaining or `export VAR=value`):
+
+```bash
+# default env (simple_spread)
+{ bash scripts/run_train_sweep.sh \
+  && bash scripts/run_sdor_sweep.sh \
+  && bash scripts/run_attack_sweep.sh \
+  && bash scripts/run_transfer_sweep.sh \
+  && python exp_aggregate.py ; } 2>&1 | tee sweep_default.log
+
+# different env (e.g. simple_reference)
+export ENV=mpe_simple_reference
+
+{ bash scripts/run_train_sweep.sh \
+  && bash scripts/run_sdor_sweep.sh \
+  && bash scripts/run_attack_sweep.sh \
+  && bash scripts/run_transfer_sweep.sh \
+  && python exp_aggregate.py ; } 2>&1 | tee sweep_${ENV}.log
+```
+
+`tee` keeps a full transcript at `sweep_<env>.log`. Every individual stage is restartable, so if you Ctrl+C and re-run the chain, completed cells are skipped.
+
+Wall-clock estimate on an RTX 3060: **~20–35 hours** for all five algorithms × two sharings × three seeds (training dominates; SDor + attack + transfer + aggregate add a few hours). If your shell may close while you're away, prefix with `nohup` and append `&` so the job survives a disconnect:
+
+```bash
+nohup bash -c 'export ENV=mpe_simple_reference && \
+  bash scripts/run_train_sweep.sh && \
+  bash scripts/run_sdor_sweep.sh && \
+  bash scripts/run_attack_sweep.sh && \
+  bash scripts/run_transfer_sweep.sh && \
+  python exp_aggregate.py' > sweep_simple_reference.log 2>&1 &
+```
+
 ### Outputs at a glance
 
 ```

@@ -35,6 +35,11 @@ ENV_MAP = {
         "env_args":      {"key": "pz-mpe-simple-spread-v3", "time_limit": 25},
         "default_t_max": 1_050_000,
     },
+    "mpe_simple_reference": {
+        "env_config":    "gymma",
+        "env_args":      {"key": "pz-mpe-simple-reference-v3", "time_limit": 25},
+        "default_t_max": 1_050_000,
+    },
     "smaclite_2s_vs_1sc": {
         "env_config":    "smaclite",
         "env_args":      {"map_name": "2s_vs_1sc", "time_limit": 150, "use_cpp_rvo2": False},
