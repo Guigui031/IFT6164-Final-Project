@@ -31,6 +31,11 @@ ENV_MAP = {
         "algo_config": {"shared": "mappo", "independent": "mappo_ns"},
         "time_limit": 25,
     },
+    "mpe_simple_reference": {
+        "key":        "pz-mpe-simple-reference-v3",
+        "algo_config": {"shared": "mappo", "independent": "mappo_ns"},
+        "time_limit": 25,
+    },
 }
 
 
