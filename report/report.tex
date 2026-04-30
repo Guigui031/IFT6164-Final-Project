@@ -11,6 +11,8 @@
 \usepackage{microtype}      % microtypography
 \usepackage{amsmath}
 \usepackage{graphicx}
+\usepackage{float}          % H float specifier — pin tables/figures in place
+\usepackage{subcaption}     % grids of subfigures with per-panel captions
 
 % TODO: Replace with your project title
 \title{Does Parameter Sharing in Multi-Agent Reinforcement Learning\\Amplify or Dampen Adversarial Vulnerability?}
@@ -122,10 +124,40 @@ We evaluate three $\ell_\infty$-bounded attacks of increasing sophistication: ra
 \section{Experimental setup}
 
 % TODO: Describe the experimental design.
-% - Datasets, models, baselines
-% - Evaluation metrics
-% - Hyperparameters and training details
-% - Computational resources used
+% Idea bullets:
+\begin{itemize}
+  \item envs: mpe simple\_spread (3 agents, 18d obs, 25 step ep, discrete) + smaclite 2s\_vs\_1sc cross env check
+  \item algos: iql ippo mappo qmix vdn, shared and indep, both from epymarl matched configs
+  \item equalisation: \_ns defaults flip use\_rnn and iql eps\_anneal, we override so sharing is the only diff
+  \item training: 3 seeds, $10^6$ env steps per cell. plateau well before cutoff (see app mappo 2m ctrl)
+  \item attacks: random noise / fgsm (CE on logits) / sdor-stor (option B, sac adversary trained vs shared mappo at each seed, transferred via stor per target gradient)
+  \item eps grid \{0.05, 0.1, 0.25, 0.5\} for rand+fgsm. sdor only at 0.25, too expensive otherwise
+  \item eval: 100 ep per (cell, attack, eps); transfer 50 ep per (src, tgt) pair
+  \item compute: single rtx 3060, $\sim$40 min per mpe cell, ~1 day training total. dropped maddpg, 1 smaclite map, 3 seeds not 5. per-experiment breakdown in table~\ref{tab:time-cost}
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{lrrr}
+\toprule
+Experiment & Cells / evals & Per cell & Total \\
+\midrule
+MPE \texttt{simple\_spread} training (5 algo $\times$ 2 sharing $\times$ 3 seeds, $t_{\max}=10^6$) & 30 cells & $\sim$40 min & $\sim$20 h \\
+MPE attack sweep (random + FGSM at 4 $\epsilon$, plus no-attack and SDOR at $\epsilon=0.25$) & 330 evals & $\sim$2 min & $\sim$11 h \\
+MPE cross-agent transfer sweep (3$\times$3 matrix, 50 ep / pair) & 30 cells & $\sim$5 min & $\sim$2.5 h \\
+SDOR-stor training (Option~B, MAPPO/shared $\times$ 3 seeds, 10K episodes) & 3 cells & $\sim$50 min & $\sim$2.5 h \\
+MAPPO/shared 2M convergence control (seed 99) & 1 cell & $\sim$80 min & $\sim$80 min \\
+SMAClite \texttt{2s\_vs\_1sc} training (QMIX shared + indep, $t_{\max}=10^6$, seed 99) & 2 cells & $\sim$5 h & $\sim$10 h \\
+SMAClite attack + transfer sweeps & 22 evals & $\sim$2 min & $\sim$45 min \\
+\midrule
+Total wall-clock used so far & --- & --- & $\sim$48 h \\
+\bottomrule
+\end{tabular}
+\caption{Per-experiment wall-clock on the single RTX 3060. Times include train/eval only (aggregation and figure rendering are minutes). All sweeps are restartable so partial reruns cost only the missing cells.}
+\label{tab:time-cost}
+\end{table}
 
 
 % ============================================================================
@@ -138,28 +170,53 @@ We evaluate three $\ell_\infty$-bounded attacks of increasing sophistication: ra
 % - Analyze whether results confirm or reject your hypothesis
 % - Include ablation studies if relevant
 
+\subsection{Training on MPE \texttt{simple\_spread}}
+\label{sec:training-curves}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}[t]{0.32\linewidth}\centering
+  \includegraphics[width=\linewidth]{figures/mpe_simple_spread_iql.png}
+  \caption{IQL}\label{fig:train-iql}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.32\linewidth}\centering
+  \includegraphics[width=\linewidth]{figures/mpe_simple_spread_ippo.png}
+  \caption{IPPO}\label{fig:train-ippo}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.32\linewidth}\centering
+  \includegraphics[width=\linewidth]{figures/mpe_simple_spread_mappo.png}
+  \caption{MAPPO}\label{fig:train-mappo}
+\end{subfigure}\\[1ex]
+\begin{subfigure}[t]{0.32\linewidth}\centering
+  \includegraphics[width=\linewidth]{figures/mpe_simple_spread_qmix.png}
+  \caption{QMIX}\label{fig:train-qmix}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.32\linewidth}\centering
+  \includegraphics[width=\linewidth]{figures/mpe_simple_spread_vdn.png}
+  \caption{VDN}\label{fig:train-vdn}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.32\linewidth}\centering
+  \phantom{}
+\end{subfigure}
+\caption{Training curves on MPE \texttt{simple\_spread} at $t_{\max}=10^6$: mean test return over 3 seeds (shaded $\pm$ SEM) for shared (blue) and independent (orange) variants of each algorithm. All panels share the same axes.}
+\label{fig:training-curves}
+\end{figure}
+
+
 \subsection{Main results}
 
-\begin{table}[h]
+\begin{table}[H]
 \centering
 \small
 \input{figures/results_table.tex}
-\caption{Clean and attacked test return on MPE \texttt{simple\_spread} (3 seeds, mean $\pm$ SEM, $n_{\mathrm{episodes}}=100$, $\epsilon=0.25$). Higher is better (returns are negative as the env penalizes distance to landmarks).}
+\caption{Mean test return on MPE \texttt{simple\_spread} for the clean environment and three observation-perturbation attacks (random noise, FGSM, SDOR-stor) at $\epsilon=0.25$. Values are mean $\pm$ SEM over 3 seeds with $n_{\mathrm{episodes}}=100$ each. Higher is better (returns are negative as the environment penalises distance to landmarks).}
 \label{tab:main}
 \end{table}
 
-
-\begin{figure}[h]
-\centering
-\includegraphics[width=\linewidth]{figures/attack_curves.png}
-\caption{Test return vs.\ attack budget $\epsilon$ for each (algorithm, sharing) cell, separately for random noise and FGSM. Shaded regions are SEM across 3 seeds. Random-noise curves are nearly flat; FGSM curves diverge between shared and independent for QMIX and VDN.}
-\label{fig:eps-sweep}
-\end{figure}
-
-\begin{figure}[h]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.9\linewidth]{figures/attack_drop_bar.png}
-\caption{Drop in test return under FGSM at $\epsilon=0.25$ relative to the clean baseline, per (algorithm, sharing) cell. Lower bars are more robust. The QMIX and VDN gaps are visible at a glance; IQL is the lone clear inversion.}
+\caption{Mean drop in test return relative to the clean baseline at $\epsilon=0.25$, per (algorithm, sharing) cell, broken out by attack: random noise, FGSM, and SDOR-stor. Error bars are the SEM of the per-seed paired drop (clean$-$attacked) across 3 seeds. Lower bars are more robust.}
 \label{fig:drop-bar}
 \end{figure}
 
@@ -167,21 +224,57 @@ We evaluate three $\ell_\infty$-bounded attacks of increasing sophistication: ra
 \label{sec:transfer-results}
 Table~\ref{tab:transfer} reports the diagonal mean (self-attack), off-diagonal mean (borrowed-attack), and their ratio for each cell at $\epsilon=0.25$. Figure~\ref{fig:transfer-heatmaps} shows the underlying $N\times N$ matrices for all 10 cells.
 
-\begin{table}[h]
+\begin{table}[H]
 \centering
 \small
 \input{figures/transfer_table.tex}
-\caption{Cross-agent perturbation transfer at $\epsilon=0.25$. \emph{Diag.\ drop} is the mean drop when agent $i$'s perturbation is applied to agent $i$ (others clean); \emph{off-diag.\ drop} when applied to agent $j \neq i$. \emph{Transfer ratio} is the ratio of the two.}
+\caption{Cross-agent perturbation transfer at $\epsilon=0.25$. \emph{Clean} is the mean clean test return; \emph{Diag.\ drop} is the mean drop when agent $i$'s perturbation is applied to agent $i$ itself (others clean); \emph{off-diag.\ drop} is the corresponding drop when agent $i$'s perturbation is applied to agent $j \neq i$; \emph{transfer ratio} is the off-diagonal drop divided by the diagonal drop.}
 \label{tab:transfer}
 \end{table}
 
-\begin{figure}[h]
+
+\subsection{Cross-environment validation: SMAClite \texttt{2s\_vs\_1sc}}
+\label{sec:smaclite-results}
+
+% TODO: Discuss the SMAClite QMIX shared-vs-independent result.
+% Idea bullets:
+\begin{itemize}
+  \item both variants reach a dense plateau but never win a battle (0\% battle\_won) - 1M is below paper's 4M
+  \item indep plateau slightly higher (~11-12) than shared (~10), opposite of mpe qmix where shared wins on clean return. so sharing's training benefit is task dependent
+  \item random noise mostly fine at small eps, hurts both at eps=0.5
+  \item fgsm has a cliff: shared goes to 0 at eps=0.25. indep collapses earlier (2.5 at eps=0.1) then bounces a bit at 0.25 before also hitting 0 at 0.5
+  \item transfer ratio (app~\ref{app:smaclite-transfer}): 0.65 shared vs 0.61 indep, same direction as mpe qmix ($0.37 \to 0.13$) but much smaller gap
+  \item caveats: 1 seed, undertrained, smaclite uses rvo2 not real sc2. preliminary not quantitative
+\end{itemize}
+
+\begin{figure}[H]
 \centering
-\includegraphics[width=\linewidth]{figures/transfer_heatmaps.png}
-\caption{Cross-agent perturbation transfer matrices for each (algorithm, sharing) cell. Each cell displays a $3\times 3$ matrix where the entry $(i, j)$ is the drop in test return when agent $i$'s FGSM perturbation is applied to agent $j$. Darker is more disruptive.}
-\label{fig:transfer-heatmaps}
+\includegraphics[width=0.95\linewidth]{figures/smaclite_2s_vs_1sc_training.png}
+\caption{QMIX training curves on SMAClite \texttt{2s\_vs\_1sc} at $t_{\max}=10^6$, seed 99: mean test return for shared (blue) and independent (orange). Battle-won mean is $0\%$ throughout for both variants and is omitted. The dense-return plateau is roughly $10$ for shared and $11$--$12$ for independent.}
+\label{fig:smaclite-curves}
 \end{figure}
 
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{6pt}
+\input{figures/smaclite_attacks_table.tex}
+\caption{Mean test return of QMIX on SMAClite \texttt{2s\_vs\_1sc} under each (attack, $\epsilon$) combination at $t_{\max}=10^6$, seed 99, $n_{\mathrm{episodes}}=100$. Higher is better.}
+\label{tab:smaclite-attacks}
+\end{table}
+
+
+\subsection{MPE \texttt{simple\_reference}}
+\label{sec:simple-reference-results}
+
+% TODO: Discuss the MPE simple_reference results once the sweep finishes.
+% Idea bullets (placeholder until the sweep finishes):
+\begin{itemize}
+  \item same protocol as simple\_spread, just diff env: 5 algos x 2 sharings x 3 seeds, same attacks + eps grid
+  \item key diffs: 2 agents (vs 3), and obs include a comm channel from the other agent's policy
+  \item question: does transfer ratio drop reproduce on smaller team + comm obs?
+  \item open Q: should fgsm mask only sensor obs or comm bits too? right now we perturb everything, comm-only ablation = follow up
+\end{itemize}
 
 
 
@@ -191,9 +284,18 @@ Table~\ref{tab:transfer} reports the diagonal mean (self-attack), off-diagonal m
 \section{Discussion}
 
 % TODO: Interpret your results.
-% - What worked? What didn't?
-% - Limitations of your approach
-% - Comparison with your pre-registered hypothesis from the extended abstract
+% Idea bullets:
+\begin{itemize}
+  \item main verdict: 4/5 transfer ratios go down when going shared -> indep. iql $0.46 \to 0.23$, ippo $0.74 \to 0.55$, mappo $0.81 \to 0.51$, qmix $0.37 \to 0.13$. vdn is the weird one ($0.20 \to 0.30$, gap ~0.10, prob seed noise)
+  \item qmix = cleanest result. 3x transfer ratio drop, fgsm drop also 1.5x bigger under sharing (28.9 vs 19.7), sdor agrees direction (-5.6 indep-shared)
+  \item mixer thing: qmix and vdn have huge fgsm drops regardless of sharing (19-29 units) bc the mixer concentrates gradient. what sharing actually changes is the OFF-diag drop (qmix $3.33 \to 0.70$). mixer makes vdec methods globally attackable, indep just localises where the damage lands
+  \item ippo/mappo: highest baseline transfer ratios under sharing (0.74, 0.81), drop to 0.51-0.55 under indep. but per-cell fgsm drops basically the same (~10 units). so the effect shows up in transfer ratio, not aggregate drop
+  \item clean-vs-robust tradeoff: qmix pays a real cost (-47.2 -> -53.7, 14\% relative drop). ippo/mappo no tradeoff at all - indep just better on clean AND attacked. so cost of indep is task/algo specific, not universal
+  \item iql + vdn exceptions: iql fgsm-delta is +2.4 (indep slightly worse on raw drop) but transfer ratio still supports ($0.46 \to 0.23$), prob a return-scale artefact. vdn 0.10 transfer ratio inversion is the only real counter, but at $n=3$ seeds it's plausibly noise
+  \item cross-env: smaclite qmix $0.65 \to 0.61$ same direction smaller gap. either undertrained (1M of paper's 4M) or the gap is genuinely smaller on a diff env family
+  \item 2m mappo control rules out undertraining as cause - same numbers within seed noise (app~\ref{app:convergence-control})
+  \item limitations: 3 seeds, one mpe config (3 homog agents), single-step grad attack, eval-time only (no adv training), no maddpg / continuous, one smaclite map
+\end{itemize}
 
 
 % ============================================================================
@@ -202,8 +304,26 @@ Table~\ref{tab:transfer} reports the diagonal mean (self-attack), off-diagonal m
 \section{Conclusion}
 
 % TODO: Summarize contributions and suggest future work.
+% Idea bullets:
+\begin{itemize}
+  \item first ablation isolating param sharing as a robustness axis in coop marl
+  \item main finding: transfer ratio drops under indep in 4/5 algos, qmix shows 3x reduction
+  \item replicates direction in smaclite qmix - not just an mpe quirk
+  \item takeaway: standard arch (sharing) has a robustness cost that nobody surfaces. qmix trades vs clean perf, ippo/mappo it's free win
+  \item future: stronger attacks (pgd, iterative per-protag adversaries), full smac at 4M, maddpg/facmac, per-protag sdor (not single anchor), and the big Q - does the gap survive adversarial training?
+  \item scaling team: theory says gap should grow with $N$ (more agents share same jacobian under sharing, more indep jacobians decorrelate under indep). natural next: same protocol on $N=5$ simple\_spread, transfer matrix becomes $5\times 5$ = 25 src-tgt pairs. estimate ~60-75h on rtx 3060 at 1M, double if 2M needed for convergence
+\end{itemize}
 
 \section{Contributions}
+% TODO: List per-author contributions (Guillaume Genois, Kamen Damov).
+% Idea bullets to flesh out together:
+\begin{itemize}
+  \item pipeline + engineering: exp\_train / exp\_attack / exp\_transfer / exp\_aggregate wrappers, sweep scripts, fig+table generation
+  \item attack impls: random noise, fgsm (ce on logits), sdor-stor option B adaptation
+  \item cross-agent transfer protocol + analysis (exp\_transfer.py)
+  \item smaclite cross-env extension, mappo 2m convergence ctrl
+  \item theory motivation, related work positioning, writing
+\end{itemize}
 
 
 % ============================================================================
@@ -213,6 +333,14 @@ Table~\ref{tab:transfer} reports the diagonal mean (self-attack), off-diagonal m
 
 % TODO (optional): Discuss ethical aspects, societal consequences,
 % who benefits/is disadvantaged, and consequences of system failure.
+% Idea bullets:
+\begin{itemize}
+  \item coop marl moving into safety-relevant stuff: traffic, distributed allocation, multi-robot
+  \item our point: ``we use the standard arch'' is NOT robustness-neutral. surfacing this lets designers actually choose
+  \item defenders gain more than attackers - they pick the arch, attackers don't
+  \item misuse risk low: attacks here are textbook fgsm, well below sota, no novel attack capability
+  \item for qmix-class systems: indep buys robustness but loses clean perf. real budget-vs-safety tradeoff in deployed teams
+\end{itemize}
 
 
 % ============================================================================
@@ -229,7 +357,59 @@ Table~\ref{tab:transfer} reports the diagonal mean (self-attack), off-diagonal m
 
 \section{Additional results}
 
-% TODO: Additional experiments, ablations, or visualizations.
+\subsection{Full per-($\epsilon$, attack, sharing) results}
+\label{app:full-results}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\input{figures/appendix_full_table.tex}
+\caption{Mean test return $\pm$ SEM over 3 seeds ($n_{\mathrm{episodes}}=100$ each) for every (algorithm, sharing, attack, $\epsilon$) cell on MPE \texttt{simple\_spread}. Per-seed values available in \texttt{figures/aggregate.json}.}
+\label{tab:appendix-full}
+\end{table}
+
+\subsection{Convergence control: MAPPO at \texorpdfstring{$t_{\max}=2$M}{t\_max=2M}}
+\label{app:convergence-control}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{figures/mappo_2m_calibration.png}
+\caption{MAPPO/shared on MPE \texttt{simple\_spread}: production runs at $t_{\max}=10^6$ (seeds 1, 2, 3) and an extended $t_{\max}=2\times 10^6$ control run (seed 99). All four runs reach the same return band by $\sim 5\times 10^5$ steps, and the seed-99 run continues to oscillate in that band for the remaining 1.5M steps with no improving trend.}
+\label{fig:mappo-2m-curve}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{6pt}
+\input{figures/mappo_2m_table.tex}
+\caption{Mean test return (and cross-agent transfer ratio, last row) of MAPPO/shared at $t_{\max}=10^6$ (production, mean $\pm$ SEM over 3 seeds with $n_{\mathrm{episodes}}=100$ each) vs $t_{\max}=2\times 10^6$ (single control run, seed 99). Attacked rows are at $\epsilon=0.25$.}
+\label{tab:appendix-2m-attacks}
+\end{table}
+
+
+\subsection{MPE \texttt{simple\_spread} cross-agent perturbation transfer}
+\label{app:mpe-transfer}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/transfer_heatmaps.png}
+\caption{Cross-agent perturbation transfer matrices for each (algorithm, sharing) cell. Each cell displays a $3\times 3$ matrix where the entry $(i, j)$ is the drop in test return when agent $i$'s FGSM perturbation is applied to agent $j$. Darker is more disruptive.}
+\label{fig:transfer-heatmaps}
+\end{figure}
+
+\subsection{SMAClite cross-agent perturbation transfer}
+\label{app:smaclite-transfer}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\input{figures/smaclite_transfer_table.tex}
+\caption{Cross-agent FGSM transfer matrix on SMAClite \texttt{2s\_vs\_1sc} (QMIX, $t_{\max}=10^6$, seed 99, $\epsilon=0.25$, $n_{\mathrm{episodes}}=50$). $D(i\!\to\!j)$ is the drop in mean return when agent $i$'s FGSM perturbation is applied to agent $j$ (others clean). Diagonal entries are self-attacks; off-diagonal entries are borrowed perturbations. The transfer-ratio direction matches the MPE QMIX result (shared $0.65$ vs independent $0.61$, both lower than the per-cell main-text MPE ratios).}
+\label{tab:smaclite-transfer}
+\end{table}
 
 
 \section{Proofs}
