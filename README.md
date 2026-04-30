@@ -98,26 +98,108 @@ This runs a 2000-step toy training run (~7 seconds). You should see TD loss arou
 
 A full 2M-step IQL training on the RTX 3060 takes **~90 minutes** and converges to `test_return_mean ≈ −34` on MPE simple_spread with 3 agents.
 
-## Running a full baseline (reproduce the sanity training)
+## Running experiments
+
+The full pipeline (train → attack → transfer-matrix → aggregate) goes through four wrapper scripts at the repo root and three matching sweep scripts under `scripts/`. The wrappers handle config selection, the `_ns` ↔ `_shared` equalisation overrides (see `CLAUDE.md` → "Sharing toggle"), and the per-cell `results/<env>/<algo>/<sharing>/seed<n>/` output layout.
+
+All commands below are run from the repo root with the venv activated.
+
+### 1. Train a single cell
 
 ```bash
-cd epymarl
-python src/main.py --config=iql --env-config=gymma \
-  with env_args.time_limit=25 env_args.key="pz-mpe-simple-spread-v3" \
-  save_model=True use_tensorboard=True \
-  label="baseline_iql_shared_seed1" seed=1
+python exp_train.py --algo iql --sharing shared --env mpe_simple_spread --seed 1 --t_max 1000000
 ```
 
-Outputs land in `epymarl/results/`:
-- `models/<run_token>/` — a `.pt` checkpoint every 50k steps
-- `tb_logs/<run_token>/` — tensorboard scalars
-- `sacred/<run_id>/` — sacred's run metadata (config, stdout, scalars)
+Arguments:
+- `--algo` ∈ {`iql`, `ippo`, `mappo`, `qmix`, `vdn`}
+- `--sharing` ∈ {`shared`, `independent`} — `independent` automatically applies the `_ns` config plus the equalisation overrides
+- `--env` ∈ {`mpe_simple_spread`, `smaclite_2s_vs_1sc`} (entries in `ENV_MAP` at the top of `exp_train.py`; add a new entry to support a new env)
+- `--seed` integer
+- `--t_max` total environment steps (defaults to the env's `default_t_max`)
 
-View the curves with:
+The wrapper is restartable — it skips cells whose checkpoint already exists. A live-updating training plot is saved to `figures/<env>/<algo>_<sharing>_seed<n>.png` and the model + sacred metadata land under `results/<env>/<algo>/<sharing>/seed<n>/`.
+
+### 2. Train every cell in the matrix
 
 ```bash
-tensorboard --logdir epymarl/results/tb_logs
+# default: 5 algos × 2 sharings × 3 seeds = 30 cells, t_max=1M, on mpe_simple_spread
+bash scripts/run_train_sweep.sh
+
+# override knobs
+T_MAX=2050000 SEEDS="1 2 3 4 5" bash scripts/run_train_sweep.sh
 ```
+
+Sequential, restartable, ~30–60 min per MPE cell on the RTX 3060.
+
+### 3. Evaluate a checkpoint under attack
+
+```bash
+# clean baseline
+python exp_attack.py --algo iql --sharing shared --env mpe_simple_spread --seed 1 \
+  --attack no_attack --epsilon 0.0 --n_episodes 100
+
+# random noise / FGSM
+python exp_attack.py --algo iql --sharing shared --env mpe_simple_spread --seed 1 \
+  --attack fgsm --epsilon 0.1 --n_episodes 100
+```
+
+`--attack` ∈ {`no_attack`, `random_noise`, `fgsm`, `sdor_stor`}. Output: `results/<env>/<algo>/<sharing>/seed<n>/attack_<atk>_eps<e>.json`.
+
+### 4. Attack sweep (all cells × {random, FGSM} × ε grid)
+
+```bash
+bash scripts/run_attack_sweep.sh
+SEEDS="1 2 3" EPSILONS="0.05 0.1 0.25 0.5" N_EPISODES=100 ENV=mpe_simple_spread \
+  bash scripts/run_attack_sweep.sh
+```
+
+Default ε grid is {0.05, 0.1, 0.25, 0.5}; default `N_EPISODES=100`. `ENV` defaults to `mpe_simple_spread`.
+
+### 5. Cross-agent transfer matrix (single cell + sweep)
+
+```bash
+# single cell — produces an N×N matrix of mean returns
+python exp_transfer.py --algo iql --sharing shared --env mpe_simple_spread --seed 1 \
+  --epsilon 0.25 --n_episodes 50
+
+# sweep over all cells
+bash scripts/run_transfer_sweep.sh
+SEEDS="1 2 3" EPSILON=0.25 N_EPISODES=50 ENV=mpe_simple_spread \
+  bash scripts/run_transfer_sweep.sh
+```
+
+Output: `results/<env>/<algo>/<sharing>/seed<n>/transfer_eps<e>.json`. The transfer ratio (off-diagonal / diagonal drop) is computed downstream by `exp_aggregate.py`.
+
+### 6. SDOR-stor learned adversary (optional, expensive)
+
+```bash
+# train the SAC-based adversary against a fixed protagonist checkpoint (Option B)
+python exp_sdor_train.py --algo mappo --sharing shared --env mpe_simple_spread --seed 1
+```
+
+Trained adversary → `results/sdor/<env>/<algo>/<sharing>/seed<n>/sdor.pt`. Then evaluate any victim with `exp_attack.py --attack sdor_stor`.
+
+### 7. Aggregate everything into report tables/figures
+
+```bash
+python exp_aggregate.py
+```
+
+Reads every `attack_*.json` and `transfer_*.json` under `results/`, writes the LaTeX tables + summary figures into `figures/`. Re-run after any new sweep.
+
+### Outputs at a glance
+
+```
+results/<env>/<algo>/<sharing>/seed<n>/
+├── models/<run_token>/<step>/agent.th     # EPyMARL checkpoint (every save_model_interval)
+├── sacred/<run_id>/{config.json, metrics.json, cout.txt}
+├── tb_logs/<run_token>/                   # tensorboard scalars
+├── attack_<atk>_eps<e>.json               # one file per (attack, ε) — mean return + per-episode
+└── transfer_eps<e>.json                   # N×N transfer matrix
+figures/                                    # aggregated plots + LaTeX tables
+```
+
+`tensorboard --logdir results/` to browse training curves.
 
 ## Optional: SMAClite (second-environment validation)
 
@@ -149,16 +231,20 @@ python src/main.py --config=qmix --env-config=smaclite \
   save_model=False use_tensorboard=False
 ```
 
-### Train via our wrapper
+### Train + evaluate via our wrappers
 
-`exp_train.py`'s `ENV_MAP` already includes `smaclite_2s_vs_1sc`:
+`exp_train.py` / `exp_attack.py` / `exp_transfer.py` all have `smaclite_2s_vs_1sc` in their `ENV_MAP`. Drive the sweeps the same way as for MPE, just pass `ENV=`:
 
 ```bash
 python exp_train.py --algo qmix --sharing shared --env smaclite_2s_vs_1sc --seed 1 \
-  --t_max 500000 --save_model_interval 100000
+  --t_max 1000000 --save_model_interval 100000
+
+ENV=smaclite_2s_vs_1sc bash scripts/run_train_sweep.sh
+ENV=smaclite_2s_vs_1sc bash scripts/run_attack_sweep.sh
+ENV=smaclite_2s_vs_1sc bash scripts/run_transfer_sweep.sh
 ```
 
-Adding more maps takes one ENV_MAP entry per new scenario — see the `smaclite_2s_vs_1sc` entry in `exp_train.py` for the shape (`env_config: smaclite`, `env_args: {map_name, time_limit, use_cpp_rvo2}`). Note: `exp_attack.py` and `exp_transfer.py` need matching ENV_MAP entries before evaluating SMAClite checkpoints.
+Adding more maps takes one `ENV_MAP` entry per new scenario in each of the three `exp_*.py` files — see the `smaclite_2s_vs_1sc` entry in `exp_train.py` for the shape (`env_config: smaclite`, `env_args: {map_name, time_limit, use_cpp_rvo2}`).
 
 ### Performance
 

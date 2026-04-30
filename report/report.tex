@@ -1,0 +1,240 @@
+\documentclass{article}
+
+\usepackage{format}
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{amsmath}
+\usepackage{graphicx}
+
+% TODO: Replace with your project title
+\title{Does Parameter Sharing in Multi-Agent Reinforcement Learning\\Amplify or Dampen Adversarial Vulnerability?}
+
+% TODO: Fill in author information
+\author{%
+  Guillaume Genois \\
+  Université de Montréal \\
+  \texttt{guillaume.genois@umontreal.ca} \\
+  \And
+  Kamen Damov \\
+  Université de Montréal \\
+  \texttt{kamen.damov@umontreal.ca} \\
+}
+
+\begin{document}
+
+\maketitle
+
+% ============================================================================
+% ABSTRACT (mandatory for final report)
+% ============================================================================
+\begin{abstract}
+% TODO: Concise summary of the problem, approach, and key findings.
+\end{abstract}
+
+% ============================================================================
+% SECTION 1: INTRODUCTION
+% ============================================================================
+\section{Introduction}
+In cooperative Multi-Agent Reinforcement Learning (MARL), parameter sharing is the dominant architectural choice: all agents use a single neural network, distinguished only by an agent ID. It speeds up training and often improves final performance \citep{gupta2017cooperative}. At the same time, MARL policies are known to be brittle: small perturbations to an agent's observations can cause large drops in team performance \citep{zhang2021robust, zhou2025robust}. A growing line of work develops adversarial training methods to improve this robustness, but all of them adopt parameter sharing by default. None isolate it as a variable.
+
+This matters because parameter sharing creates a single gradient landscape for the entire team. A perturbation that fools one agent should, in principle, fool all others since they share the same weights. With independent parameters, an adversary must find $N$ separate vulnerabilities. On the other hand, shared experience across agents could also act as implicit regularization, making the shared network harder to attack. Which effect dominates is an open empirical question.
+
+We propose a controlled ablation to find out. Using EPyMARL \citep{christianos2020epymarl}, we train cooperative teams with six algorithms (IQL, IPPO, MAPPO, MADDPG, QMIX, and VDN), each in shared and independent parameter variants, and subject them to three attacks of increasing strength: random noise, FGSM \citep{goodfellow2014explaining}, and a stochastic learned adversary \citep{zhou2025robust}. By comparing performance drop, cross-agent perturbation transfer, and adversary sample efficiency across both configurations, we aim to determine whether parameter sharing amplifies or dampens adversarial vulnerability in cooperative MARL.
+% TODO: Motivate the problem. Why is it important in adversarial ML?
+% State your research question / hypothesis clearly.
+
+
+% ============================================================================
+% SECTION 2: RELATED WORK
+% ============================================================================
+\section{Related work}
+\subsection{Parameter sharing in MARL.}
+In cooperative MARL, parameter sharing lets all agents use a single neural network, with an agent ID to distinguish them. This improves sample efficiency since every agent's experience contributes to the same gradient updates \citep{gupta2017cooperative}, and it matches or exceeds independent parameters on most cooperative benchmarks \citep{yu2022mappo}. The algorithms we study span two families. On the value-based side, IQL \citep{tan1993iql} is the simplest baseline: each agent runs independent Q-learning, treating other agents as part of the environment. VDN \citep{sunehag2018vdn} sums individual Q-values and QMIX \citep{rashid2020qmix} combines them through a non-linear mixing network. On the policy gradient side, IPPO \citep{dewitt2020ippo} has each agent optimize independently with no shared structure beyond the weights themselves, while MAPPO \citep{yu2022mappo} adds a centralized critic with access to global state during training. MADDPG \citep{lowe2017maddpg} uses independent parameters by design, with a centralized critic and continuous actions. Despite extensive study of parameter sharing for performance, no prior work examines how it interacts with adversarial robustness. This is the gap we address.
+
+\subsection{Adversarial attacks on RL observations.}
+Deep RL policies are vulnerable to small $\ell_\infty$-bounded observation perturbations, even in single-agent settings \citep{zhang2021robust}. Attacks range from one-step gradient methods like FGSM \citep{goodfellow2014explaining} to learned adversaries trained via RL \citep{zhang2021atla}, which produce stronger but more expensive attacks. In multi-agent settings, the problem is compounded: perturbing one agent's observations affects the entire team's reward, and training against a single strong adversary can cause the protagonist to overfit to that attacker, degrading clean-environment performance \citep{guo2024multiagent}.
+
+\subsection{Robust multi-agent RL.}
+Recent work addresses this overfitting problem through stochastic adversaries. \citet{zhou2025robust} replace the deterministic adversary with a stochastic one that maximizes both attack effectiveness and entropy, preventing the protagonist from memorizing a fixed perturbation pattern. This achieves state-of-the-art robustness on SMAC and driving benchmarks. Other approaches promote robustness via regularization \citep{bukharin2023ernie} or diverse adversary populations \citep{vinitsky2020rap, yuan2023romance}. All use parameter sharing by default without questioning it.
+
+\subsection{Environments.}
+SMAC \citep{samvelyan2019smac} is a cooperative micromanagement benchmark built on StarCraft~II. Each map defines a team of units that must defeat an enemy team controlled by the built-in game AI. Agents receive local observations (health, position, and visibility of nearby allies and enemies) and choose from discrete actions (move, attack, stop, no-op). We use maps \texttt{3m} (3 Marines vs.\ 3 Marines) and \texttt{8m} (8 vs.\ 8), both with homogeneous agents, and report win rate.
+MPE Cooperative Navigation \citep{mordatch2018mpe} is a simpler continuous-space environment where $N$ agents must spread out to cover $N$ landmarks while avoiding collisions. Agents observe their own position and velocity along with the relative positions of all landmarks and other agents. The team is rewarded based on how close the nearest agent is to each landmark, with a penalty for collisions. This environment supports both discrete and continuous action spaces, and we report mean reward.
+
+% TODO: Survey relevant prior work. Position your contribution relative
+% to existing methods.
+
+
+% ============================================================================
+% SECTION 3: BACKGROUND
+% ============================================================================
+\section{Background}
+\label{sec:background}
+
+\subsection{Decentralized POMDP}
+We model a cooperative team of $N$ agents as a Dec-POMDP. At each step, agent $i$ observes $o_i \in \Omega_i$ derived from global state $s$ and selects $a_i \sim \pi_i(\cdot \mid o_i)$. The joint action $\mathbf{a}$ produces $s' \sim \mathcal{T}(\cdot \mid s, \mathbf{a})$ and a shared team reward $r$. The team maximizes the discounted return $\mathbb{E}\big[\sum_t \gamma^t r_t\big]$.
+
+\subsection{Shared vs.\ independent parameter teams}
+The \emph{shared} variant uses a single policy $\pi_\theta$ for all agents, distinguished by a one-hot agent ID; the \emph{independent} variant gives each agent its own $\pi_{\xi_i}$. Both train under centralized training with decentralized execution: actors observe only $o_i$, while a centralized critic conditions on $s$. The structural difference is the parameter count: $|\theta|$ vs.\ $\sum_i |\xi_i| \approx N\,|\theta|$.
+
+\subsection{Observation-perturbation attacks}
+At evaluation, an adversary replaces each $o_i$ with $\tilde{o}_i = o_i + \delta_i$, subject to $\|\delta_i\|_\infty \leq \epsilon$; the protagonist is unmodified. We consider three attacks: \textbf{Random noise} ($\delta_i \sim \mathrm{Uniform}[-\epsilon,\epsilon]^{\dim o_i}$, a model-free baseline); \textbf{FGSM} \citep{goodfellow2014explaining}, a one-step gradient ascent on the protagonist's cross-entropy, $\delta_i = \epsilon \, \mathrm{sign}\,\nabla_{o_i}\mathcal{L}(\pi(o_i), a_i^\star)$; and \textbf{SDor+STor} \citep{zhou2025robust}, a learned stochastic adversary trained offline via Soft Actor--Critic, where SDor proposes an action-space perturbation direction $\hat{a}_i$ and STor finds the observation perturbation that maximally aligns the protagonist's policy shift with $\hat{a}_i$.
+
+
+% ============================================================================
+% SECTION 4: THEORETICAL MOTIVATION
+% ============================================================================
+\section{Theoretical motivation}
+\label{sec:theory}
+
+\paragraph{Why shared parameters might be more vulnerable.}
+\textbf{(i)} \textit{Correlated errors.} All agents apply the same Jacobian $\nabla_o \pi_\theta$ to their perturbed observations; under independent $\{\pi_{\xi_i}\}$, the per-agent Jacobians differ and errors partially decorrelate.
+\textbf{(ii)} \textit{Coordination penalizes correlation.} When agents must spread to cover distinct landmarks, errors pushing the team in the same direction leave landmarks uncovered, while decorrelated errors partially compensate. The expected return loss couples through the cross-agent error covariance --- large under sharing, small under independence.
+\textbf{(iii)} \textit{Easier attacker problem.} One perturbation that fools $\pi_\theta$ fools every agent at once; attacking $N$ independent policies requires fooling all of them simultaneously, a strictly more constrained optimization.
+
+\paragraph{Why shared parameters might be less vulnerable.}
+Shared parameters receive $N$ times more gradient signal per update, yielding smoother decision boundaries (smaller local Lipschitz constants) and acting as implicit regularization --- less local sensitivity for the attacker to exploit.
+
+
+% ============================================================================
+% SECTION 5: METHOD / APPROACH
+% ============================================================================
+\section{Method}
+All six algorithms are taken from EPyMARL \citep{christianos2020epymarl}, which provides both shared and non-shared parameter variants. Each algorithm is chosen to isolate a different aspect of how parameter sharing interacts with adversarial perturbations. IQL is the most basic value-based method: each agent learns a Q-function independently with no mixer or joint structure, making it the purest testbed for the effect of weight sharing alone. IPPO plays the same role on the policy gradient side. MAPPO adds a centralized critic that accesses global state during training, letting us test whether this additional information during learning produces policies that are more robust to perturbations at evaluation time. VDN and QMIX are value decomposition methods where individual Q-values are combined through a mixer (additive for VDN, non-linear for QMIX), which lets us observe whether the mixer dampens or amplifies perturbed Q-values. These are also the algorithms evaluated in the stochastic adversary paper \citep{zhou2025robust}, making our results directly comparable. Finally, MADDPG covers continuous action spaces and uses independent parameters by design, serving as a reference for a naturally non-shared architecture.
+
+We evaluate three $\ell_\infty$-bounded attacks of increasing sophistication: random noise as a baseline, FGSM \citep{goodfellow2014explaining} as a single-step gradient attack, and the stochastic learned adversary from \citet{zhou2025robust}. We measure performance drop, cross-agent perturbation transfer, and adversary sample efficiency under clean and adversarial conditions. Experiments will run on the Mila cluster and a personal RTX 3060.
+
+% TODO: Describe your approach in detail.
+% - Formal problem setup
+% - Algorithm / model / theoretical framework
+% - Key design choices and justifications
+
+
+% ============================================================================
+% SECTION 5: EXPERIMENTAL SETUP
+% ============================================================================
+\section{Experimental setup}
+
+% TODO: Describe the experimental design.
+% - Datasets, models, baselines
+% - Evaluation metrics
+% - Hyperparameters and training details
+% - Computational resources used
+
+
+% ============================================================================
+% SECTION 6: RESULTS
+% ============================================================================
+\section{Results}
+
+% TODO: Present your results with tables and/or figures.
+% - Compare against baselines
+% - Analyze whether results confirm or reject your hypothesis
+% - Include ablation studies if relevant
+
+\subsection{Main results}
+
+\begin{table}[h]
+\centering
+\small
+\input{figures/results_table.tex}
+\caption{Clean and attacked test return on MPE \texttt{simple\_spread} (3 seeds, mean $\pm$ SEM, $n_{\mathrm{episodes}}=100$, $\epsilon=0.25$). Higher is better (returns are negative as the env penalizes distance to landmarks).}
+\label{tab:main}
+\end{table}
+
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/attack_curves.png}
+\caption{Test return vs.\ attack budget $\epsilon$ for each (algorithm, sharing) cell, separately for random noise and FGSM. Shaded regions are SEM across 3 seeds. Random-noise curves are nearly flat; FGSM curves diverge between shared and independent for QMIX and VDN.}
+\label{fig:eps-sweep}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\linewidth]{figures/attack_drop_bar.png}
+\caption{Drop in test return under FGSM at $\epsilon=0.25$ relative to the clean baseline, per (algorithm, sharing) cell. Lower bars are more robust. The QMIX and VDN gaps are visible at a glance; IQL is the lone clear inversion.}
+\label{fig:drop-bar}
+\end{figure}
+
+\subsection{Cross-agent perturbation transfer}
+\label{sec:transfer-results}
+Table~\ref{tab:transfer} reports the diagonal mean (self-attack), off-diagonal mean (borrowed-attack), and their ratio for each cell at $\epsilon=0.25$. Figure~\ref{fig:transfer-heatmaps} shows the underlying $N\times N$ matrices for all 10 cells.
+
+\begin{table}[h]
+\centering
+\small
+\input{figures/transfer_table.tex}
+\caption{Cross-agent perturbation transfer at $\epsilon=0.25$. \emph{Diag.\ drop} is the mean drop when agent $i$'s perturbation is applied to agent $i$ (others clean); \emph{off-diag.\ drop} when applied to agent $j \neq i$. \emph{Transfer ratio} is the ratio of the two.}
+\label{tab:transfer}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/transfer_heatmaps.png}
+\caption{Cross-agent perturbation transfer matrices for each (algorithm, sharing) cell. Each cell displays a $3\times 3$ matrix where the entry $(i, j)$ is the drop in test return when agent $i$'s FGSM perturbation is applied to agent $j$. Darker is more disruptive.}
+\label{fig:transfer-heatmaps}
+\end{figure}
+
+
+
+
+% ============================================================================
+% SECTION 7: DISCUSSION
+% ============================================================================
+\section{Discussion}
+
+% TODO: Interpret your results.
+% - What worked? What didn't?
+% - Limitations of your approach
+% - Comparison with your pre-registered hypothesis from the extended abstract
+
+
+% ============================================================================
+% SECTION 8: CONCLUSION
+% ============================================================================
+\section{Conclusion}
+
+% TODO: Summarize contributions and suggest future work.
+
+\section{Contributions}
+
+
+% ============================================================================
+% BROADER IMPACT (does not count towards page limit)
+% ============================================================================
+\section*{Broader impact}
+
+% TODO (optional): Discuss ethical aspects, societal consequences,
+% who benefits/is disadvantaged, and consequences of system failure.
+
+
+% ============================================================================
+% REFERENCES (does not count towards page limit)
+% ============================================================================
+\bibliography{references}
+\bibliographystyle{abbrvnat}
+
+
+% ============================================================================
+% APPENDIX (focus of evaluation is on the 8 main pages)
+% ============================================================================
+\appendix
+
+\section{Additional results}
+
+% TODO: Additional experiments, ablations, or visualizations.
+
+
+\section{Proofs}
+
+% TODO: Technical proofs if applicable.
+
+
+\end{document}
