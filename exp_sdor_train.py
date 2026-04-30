@@ -201,7 +201,7 @@ def main():
     }
 
     print(f"Training SDor for {args.n_train_episodes} episodes | "
-          f"ε={args.epsilon} | device={device}")
+          f"eps={args.epsilon} | device={device}")
 
     for episode in range(1, args.n_train_episodes + 1):
         mac.init_hidden(batch_size=1)
@@ -286,8 +286,8 @@ def main():
     sdor.save(str(out_dir))
     (out_dir / "training_metrics.json").write_text(json.dumps(metrics, indent=2))
     _save_progress_plot(metrics, plot_path, plot_title)
-    print(f"\nSDor checkpoint → {out_dir / 'sdor.pt'}")
-    print(f"Metrics          → {out_dir / 'training_metrics.json'}")
+    print(f"\nSDor checkpoint -> {out_dir / 'sdor.pt'}")
+    print(f"Metrics          -> {out_dir / 'training_metrics.json'}")
 
 
 if __name__ == "__main__":
