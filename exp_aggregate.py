@@ -85,11 +85,13 @@ def render_results_table(records, focus_epsilon: float, out_path: Path):
 
     Emits a booktabs table the final report can \\input."""
     lines = []
-    lines.append(r"\begin{tabular}{llrrr}")
+    lines.append(r"\begin{tabular}{llrrrr}")
     lines.append(r"\toprule")
-    lines.append(r"Algorithm & Params & Clean & Random ($\epsilon="
-                 + f"{focus_epsilon:g}" + r"$) & FGSM ($\epsilon="
-                 + f"{focus_epsilon:g}" + r"$) \\")
+    eps = f"{focus_epsilon:g}"
+    lines.append(
+        r"Algorithm & Params & Clean & Random ($\epsilon=" + eps + r"$) & "
+        r"FGSM ($\epsilon=" + eps + r"$) & SDOR-stor ($\epsilon=" + eps + r"$) \\"
+    )
     lines.append(r"\midrule")
     for algo in ALGOS:
         for sharing in SHARINGS:
@@ -101,14 +103,53 @@ def render_results_table(records, focus_epsilon: float, out_path: Path):
             clean_vals = clean[sorted(clean.keys())[0]] if clean else []
             m, sem, n = mean_sem(clean_vals)
             row.append(f"${m:+.1f}\\pm{sem:.1f}$" if not math.isnan(m) else "--")
-            # Random at focus_epsilon
-            rand = records[algo][sharing].get("random_noise", {}).get(focus_epsilon, [])
-            m, sem, _ = mean_sem(rand)
-            row.append(f"${m:+.1f}\\pm{sem:.1f}$" if not math.isnan(m) else "--")
-            # FGSM at focus_epsilon
-            fgsm = records[algo][sharing].get("fgsm", {}).get(focus_epsilon, [])
-            m, sem, _ = mean_sem(fgsm)
-            row.append(f"${m:+.1f}\\pm{sem:.1f}$" if not math.isnan(m) else "--")
+            for attack in ("random_noise", "fgsm", "sdor_stor"):
+                runs = records[algo][sharing].get(attack, {}).get(focus_epsilon, [])
+                m, sem, _ = mean_sem(runs)
+                row.append(f"${m:+.1f}\\pm{sem:.1f}$" if not math.isnan(m) else "--")
+            lines.append(" & ".join(row) + r" \\")
+        if algo != ALGOS[-1]:
+            lines.append(r"\midrule")
+    lines.append(r"\bottomrule")
+    lines.append(r"\end{tabular}")
+    out_path.write_text("\n".join(lines))
+    print(f"[aggregate] wrote {out_path}")
+
+
+def render_appendix_full_table(records, out_path: Path):
+    """LaTeX table: full epsilon sweep for random + FGSM, per (algo, sharing) cell.
+
+    One row per (algo, sharing). Columns: Clean, Random at each epsilon, FGSM at
+    each epsilon. Each cell is 'mean +/- sem'."""
+    eps_grid = [0.05, 0.1, 0.25, 0.5]
+
+    def cell(runs):
+        m, sem, _ = mean_sem(runs)
+        return f"${m:+.1f}\\pm{sem:.1f}$" if not math.isnan(m) else "--"
+
+    eps_cols = " & ".join(f"{e:g}" for e in eps_grid)
+    n_eps = len(eps_grid)
+
+    lines = [
+        r"\begin{tabular}{ll" + "r" * (1 + 2 * n_eps) + "}",
+        r"\toprule",
+        r" & & Clean & \multicolumn{" + str(n_eps) + r"}{c}{Random} & "
+        r"\multicolumn{" + str(n_eps) + r"}{c}{FGSM} \\",
+        r"\cmidrule(lr){4-" + str(3 + n_eps) + r"}"
+        r"\cmidrule(lr){" + str(4 + n_eps) + r"-" + str(3 + 2 * n_eps) + r"}",
+        r"Algo & Params & 0.0 & " + eps_cols + " & " + eps_cols + r" \\",
+        r"\midrule",
+    ]
+    for algo in ALGOS:
+        for sharing in SHARINGS:
+            if sharing not in records.get(algo, {}):
+                continue
+            row = [algo.upper(), sharing]
+            clean = records[algo][sharing].get("no_attack", {})
+            row.append(cell(clean[sorted(clean.keys())[0]]) if clean else "--")
+            for atk in ("random_noise", "fgsm"):
+                for e in eps_grid:
+                    row.append(cell(records[algo][sharing].get(atk, {}).get(e, [])))
             lines.append(" & ".join(row) + r" \\")
         if algo != ALGOS[-1]:
             lines.append(r"\midrule")
@@ -123,6 +164,10 @@ def render_attack_curves(records, out_path: Path):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+
+    SHARING_COLOR = {"shared": "tab:blue", "independent": "tab:orange"}
+    ATTACK_MARKER = {"no_attack": "o", "random_noise": "s",
+                     "fgsm": "^", "sdor_stor": "D"}
 
     n_algos = sum(1 for a in ALGOS if a in records)
     fig, axes = plt.subplots(n_algos, 1, figsize=(7, 2.5 * n_algos), sharex=True)
@@ -144,16 +189,17 @@ def render_attack_curves(records, out_path: Path):
                 eps_vals = sorted(data.keys())
                 means = [mean_sem(data[e])[0] for e in eps_vals]
                 sems = [mean_sem(data[e])[1] for e in eps_vals]
-                style = "-" if sharing == "shared" else "--"
-                label = f"{sharing}/{attack}"
-                ax.errorbar(eps_vals, means, yerr=sems, fmt=style,
-                            marker="o", markersize=4, capsize=3, label=label)
+                ax.errorbar(eps_vals, means, yerr=sems,
+                            color=SHARING_COLOR[sharing], linestyle="-",
+                            marker=ATTACK_MARKER.get(attack, "o"),
+                            markersize=4, capsize=3,
+                            label=f"{sharing}/{attack}")
         ax.set_title(f"{algo.upper()}")
-        ax.set_ylabel("test return mean")
+        ax.set_ylabel("Mean test return")
         ax.grid(alpha=0.3)
         if ai == 1:
             ax.legend(fontsize=8, ncol=3, loc="upper right")
-    axes[-1].set_xlabel(r"perturbation $\epsilon$ (L$_\infty$)")
+    axes[-1].set_xlabel(r"Perturbation budget $\epsilon$ (L$_\infty$)")
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -166,7 +212,18 @@ def render_drop_bars(records, focus_epsilon: float, out_path: Path):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    rows = []  # (algo, sharing, fgsm_drop, random_drop)
+    def paired_drop(clean_runs, attack_runs):
+        """Per-seed paired drop (clean - attacked); returns (mean, sem)."""
+        clean_by_seed = dict(clean_runs)
+        drops = [clean_by_seed[s] - v for (s, v) in attack_runs if s in clean_by_seed]
+        if not drops:
+            return (float("nan"), 0.0)
+        n = len(drops)
+        m = float(np.mean(drops))
+        sem = float(np.std(drops, ddof=1) / math.sqrt(n)) if n > 1 else 0.0
+        return (m, sem)
+
+    rows = []  # (algo, sharing, (rand_drop, sem), (fgsm_drop, sem), (sdor_drop, sem))
     for algo in ALGOS:
         if algo not in records:
             continue
@@ -176,23 +233,33 @@ def render_drop_bars(records, focus_epsilon: float, out_path: Path):
             clean = records[algo][sharing].get("no_attack", {})
             if not clean:
                 continue
-            clean_mean = mean_sem(clean[sorted(clean.keys())[0]])[0]
-            fgsm_mean = mean_sem(records[algo][sharing].get("fgsm", {}).get(focus_epsilon, []))[0]
-            rand_mean = mean_sem(records[algo][sharing].get("random_noise", {}).get(focus_epsilon, []))[0]
-            rows.append((algo, sharing, clean_mean, fgsm_mean, rand_mean))
+            clean_runs = clean[sorted(clean.keys())[0]]
+            rand_runs = records[algo][sharing].get("random_noise", {}).get(focus_epsilon, [])
+            fgsm_runs = records[algo][sharing].get("fgsm", {}).get(focus_epsilon, [])
+            sdor_runs = records[algo][sharing].get("sdor_stor", {}).get(focus_epsilon, [])
+            rows.append((algo, sharing,
+                         paired_drop(clean_runs, rand_runs),
+                         paired_drop(clean_runs, fgsm_runs),
+                         paired_drop(clean_runs, sdor_runs)))
 
-    labels = [f"{a}\n{s[:3]}" for (a, s, *_) in rows]
-    fgsm_drops = [c - f for (_, _, c, f, _) in rows]
-    rand_drops = [c - r for (_, _, c, _, r) in rows]
+    labels     = [f"{a.upper()}\n{s[:3]}" for (a, s, *_) in rows]
+    rand_drops = [r[0] for (_, _, r, _, _) in rows]
+    rand_sems  = [r[1] for (_, _, r, _, _) in rows]
+    fgsm_drops = [f[0] for (_, _, _, f, _) in rows]
+    fgsm_sems  = [f[1] for (_, _, _, f, _) in rows]
+    sdor_drops = [s[0] for (_, _, _, _, s) in rows]
+    sdor_sems  = [s[1] for (_, _, _, _, s) in rows]
     x = np.arange(len(rows))
-    w = 0.4
+    w = 0.27
+    err_kw = dict(capsize=2.5, error_kw=dict(elinewidth=0.7, ecolor="black"))
 
     fig, ax = plt.subplots(figsize=(max(7, 0.7 * len(rows)), 4))
-    ax.bar(x - w / 2, rand_drops, w, label="random")
-    ax.bar(x + w / 2, fgsm_drops, w, label="FGSM")
+    ax.bar(x - w, rand_drops, w, yerr=rand_sems, label="random",    **err_kw)
+    ax.bar(x,     fgsm_drops, w, yerr=fgsm_sems, label="FGSM",      **err_kw)
+    ax.bar(x + w, sdor_drops, w, yerr=sdor_sems, label="SDOR-stor", **err_kw)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=8)
-    ax.set_ylabel(f"return drop vs clean (ε={focus_epsilon:g})")
+    ax.set_ylabel("Return drop vs clean baseline")
     ax.axhline(0, color="k", lw=0.5)
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
@@ -322,8 +389,8 @@ def render_transfer_heatmaps(transfer_records, epsilon: float, out_path: Path):
             N = drop_mat.shape[0]
             ax.set_xticks(range(N))
             ax.set_yticks(range(N))
-            ax.set_xlabel("target agent")
-            ax.set_ylabel("source agent")
+            ax.set_xlabel("Target agent")
+            ax.set_ylabel("Source agent")
             for s in range(N):
                 for t in range(N):
                     ax.text(t, s, f"{drop_mat[s, t]:.1f}", ha="center", va="center",
@@ -385,6 +452,8 @@ def main():
     dump_json(records, args.out / "aggregate.json")
     render_results_table(records, args.focus_epsilon,
                          args.out / "results_table.tex")
+    render_appendix_full_table(records,
+                               args.out / "appendix_full_table.tex")
     render_attack_curves(records, args.out / "attack_curves.png")
     render_drop_bars(records, args.focus_epsilon,
                      args.out / "attack_drop_bar.png")

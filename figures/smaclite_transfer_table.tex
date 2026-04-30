@@ -1,0 +1,10 @@
+\begin{tabular}{llrrrrrrrr}
+\toprule
+& & & \multicolumn{4}{c}{Drop $D(\text{source}\to\text{target})$} & & & \\
+\cmidrule(lr){4-7}
+Algorithm & Params & Clean & $D(0\!\to\!0)$ & $D(0\!\to\!1)$ & $D(1\!\to\!0)$ & $D(1\!\to\!1)$ & Diag.\ drop & Off-diag.\ drop & Transfer ratio \\
+\midrule
+QMIX & shared      & $10.04$ & $6.90$  & $6.27$ & $3.14$ & $7.53$  & $7.22$  & $4.71$ & $0.65$ \\
+QMIX & independent & $11.29$ & $10.04$ & $4.76$ & $8.15$ & $11.29$ & $10.67$ & $6.46$ & $0.61$ \\
+\bottomrule
+\end{tabular}
