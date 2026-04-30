@@ -27,7 +27,7 @@ env/
 Thumbs.db
 
 # Experiment outputs — kept out of git, reproduced from configs + seeds
-results/
+results/mpe_simple_spread
 checkpoints/
 wandb/
 runs/

@@ -1,3 +1,4 @@
+Using Python 3.10.20 environment at: C:\Users\guill\GitHub\IFT6164-Final-Project\.venv
 # Install torch/torchvision separately (CUDA wheels not on PyPI):
 #   uv pip install torch==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cu121
 absl-py==2.4.0
