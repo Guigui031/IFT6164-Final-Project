@@ -332,9 +332,10 @@ def render_transfer_table(transfer_records, epsilon: float, out_path: Path):
             diag_m = float(np.mean(diag_drops)) if diag_drops else float("nan")
             off_m = float(np.mean(off_drops)) if off_drops else float("nan")
             ratio = off_m / diag_m if diag_m > 0 else float("nan")
+            ratio_str = f"${ratio:.2f}$" if not math.isnan(ratio) else "--"
             lines.append(
                 f"{algo.upper()} & {sharing} & "
-                f"${clean_m:+.2f}$ & ${diag_m:.2f}$ & ${off_m:.2f}$ & ${ratio:.2f}$ \\\\"
+                f"${clean_m:+.2f}$ & ${diag_m:.2f}$ & ${off_m:.2f}$ & {ratio_str} \\\\"
             )
         if algo != ALGOS[-1]:
             lines.append(r"\midrule")
