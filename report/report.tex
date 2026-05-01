@@ -152,7 +152,13 @@ MAPPO/shared 2M convergence control (seed 99) & 1 cell & $\sim$80 min & $\sim$80
 SMAClite \texttt{2s\_vs\_1sc} training (QMIX shared + indep, $t_{\max}=10^6$, seed 99) & 2 cells & $\sim$5 h & $\sim$10 h \\
 SMAClite attack + transfer sweeps & 22 evals & $\sim$2 min & $\sim$45 min \\
 \midrule
-Total wall-clock used so far & --- & --- & $\sim$48 h \\
+\multicolumn{4}{l}{\textit{MPE \texttt{simple\_reference} pipeline (added later, 2 agents):}} \\
+\quad training (5 algo $\times$ 2 sharing $\times$ 3 seeds, $t_{\max}=10^6$) & 30 cells & $\sim$33 min & $\sim$16.5 h \\
+\quad SDOR-stor training (MAPPO/shared $\times$ 3 seeds) & 3 cells & $\sim$40 min & $\sim$2 h \\
+\quad attack sweep (no-attack + random/FGSM at 4 $\epsilon$ + SDOR at $\epsilon=0.25$) & 330 evals & $\sim$6 s & $\sim$34 min \\
+\quad cross-agent transfer sweep (2$\times$2 matrix, 50 ep / pair) & 30 cells & $\sim$17 s & $\sim$8 min \\
+\midrule
+Total wall-clock used so far & --- & --- & $\sim$67 h \\
 \bottomrule
 \end{tabular}
 \caption{Per-experiment wall-clock on the single RTX 3060. Times include train/eval only (aggregation and figure rendering are minutes). All sweeps are restartable so partial reruns cost only the missing cells.}
