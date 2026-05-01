@@ -1,8 +1,12 @@
-"""Plot MPE simple_spread training curves (test_return_mean) per algo, shared vs independent.
+"""Plot MPE training curves (test_return_mean) per algo, shared vs independent.
 
-Writes one PNG per algorithm under figures/mpe_simple_spread_<algo>.png so the
-report can include each panel independently and add its own caption.
+Writes one PNG per algorithm under figures/<env>_<algo>.png so the report can
+include each panel independently and add its own caption.
+
+Usage:
+    python scripts/plot_mpe_curves.py [--env mpe_simple_spread|mpe_simple_reference]
 """
+import argparse
 import json
 import glob
 from pathlib import Path
@@ -16,7 +20,17 @@ REPO = Path(__file__).resolve().parent.parent
 OUT_DIR = REPO / "figures"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-ENV_SUBDIR = "pz-mpe-simple-spread-v3"
+ENV_SUBDIRS = {
+    "mpe_simple_spread":    "pz-mpe-simple-spread-v3",
+    "mpe_simple_reference": "pz-mpe-simple-reference-v3",
+}
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--env", choices=list(ENV_SUBDIRS), default="mpe_simple_spread")
+args = ap.parse_args()
+
+ENV = args.env
+ENV_SUBDIR = ENV_SUBDIRS[ENV]
 SEEDS = (1, 2, 3)
 
 ALGOS = [
@@ -34,8 +48,9 @@ VARIANTS = [
 
 
 def load_seed_curves(cfg, expected_local_suffix, seed):
-    """Return (steps, values) for the matching sacred run, or (None, None) if missing."""
+    """Return (steps, values) for the most-complete matching sacred run, or (None, None)."""
     pattern = REPO / "epymarl" / "results" / "sacred" / cfg / ENV_SUBDIR / "*" / "config.json"
+    best = (None, None, -1)  # (steps, values, len)
     for cfg_path in sorted(glob.glob(str(pattern))):
         with open(cfg_path) as f:
             cdata = json.load(f)
@@ -44,9 +59,9 @@ def load_seed_curves(cfg, expected_local_suffix, seed):
             with open(Path(cfg_path).parent / "metrics.json") as f:
                 m = json.load(f)
             r = m.get("test_return_mean", {})
-            if r:
-                return np.asarray(r["steps"]), np.asarray(r["values"])
-    return None, None
+            if r and len(r.get("steps", [])) > best[2]:
+                best = (np.asarray(r["steps"]), np.asarray(r["values"]), len(r["steps"]))
+    return best[0], best[1]
 
 
 def aggregate(curves):
@@ -73,7 +88,7 @@ for algo, _ in ALGOS:
     series = []
     for sharing, suffix, color, ls in VARIANTS:
         cfg = f"{algo}{suffix}"
-        expected = f"mpe_simple_spread/{algo}/{sharing}/seed"
+        expected = f"{ENV}/{algo}/{sharing}/seed"
         curves = []
         for seed in SEEDS:
             s, v = load_seed_curves(cfg, f"{expected}{seed}", seed)
@@ -113,7 +128,7 @@ for algo, _ in ALGOS:
     ax.grid(True, alpha=0.3)
     ax.legend(loc="lower right")
     fig.tight_layout()
-    out_path = OUT_DIR / f"mpe_simple_spread_{algo}.png"
+    out_path = OUT_DIR / f"{ENV}_{algo}.png"
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
     print(f"Saved -> {out_path}")
