@@ -449,14 +449,16 @@ def main():
     print(f"[aggregate] found {n_records} per-seed data points across "
           f"{len(records)} algos")
 
-    dump_json(records, args.out / "aggregate.json")
+    prefix = args.env  # env-prefixed output filenames, e.g. mpe_simple_spread_*
+
+    dump_json(records, args.out / f"{prefix}_aggregate.json")
     render_results_table(records, args.focus_epsilon,
-                         args.out / "results_table.tex")
+                         args.out / f"{prefix}_results_table.tex")
     render_appendix_full_table(records,
-                               args.out / "appendix_full_table.tex")
-    render_attack_curves(records, args.out / "attack_curves.png")
+                               args.out / f"{prefix}_appendix_full_table.tex")
+    render_attack_curves(records, args.out / f"{prefix}_attack_curves.png")
     render_drop_bars(records, args.focus_epsilon,
-                     args.out / "attack_drop_bar.png")
+                     args.out / f"{prefix}_attack_drop_bar.png")
 
     # Transfer analysis (only runs if exp_transfer.py was run at focus_epsilon).
     transfer_records = scan_transfer(args.env, args.focus_epsilon)
@@ -467,9 +469,9 @@ def main():
         print(f"[aggregate] found transfer data for {n_transfer_cells} cells "
               f"at epsilon={args.focus_epsilon}")
         render_transfer_table(transfer_records, args.focus_epsilon,
-                              args.out / "transfer_table.tex")
+                              args.out / f"{prefix}_transfer_table.tex")
         render_transfer_heatmaps(transfer_records, args.focus_epsilon,
-                                 args.out / "transfer_heatmaps.png")
+                                 args.out / f"{prefix}_transfer_heatmaps.png")
     else:
         print(f"[aggregate] no transfer data at epsilon={args.focus_epsilon}; "
               "run exp_transfer.py to generate it.")

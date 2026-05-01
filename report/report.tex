@@ -214,14 +214,14 @@ Total wall-clock used so far & --- & --- & $\sim$67 h \\
 \begin{table}[H]
 \centering
 \small
-\input{figures/results_table.tex}
+\input{figures/mpe_simple_spread_results_table.tex}
 \caption{Mean test return on MPE \texttt{simple\_spread} for the clean environment and three observation-perturbation attacks (random noise, FGSM, SDOR-stor) at $\epsilon=0.25$. Values are mean $\pm$ SEM over 3 seeds with $n_{\mathrm{episodes}}=100$ each. Higher is better (returns are negative as the environment penalises distance to landmarks).}
 \label{tab:main}
 \end{table}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.9\linewidth]{figures/attack_drop_bar.png}
+\includegraphics[width=0.9\linewidth]{figures/mpe_simple_spread_attack_drop_bar.png}
 \caption{Mean drop in test return relative to the clean baseline at $\epsilon=0.25$, per (algorithm, sharing) cell, broken out by attack: random noise, FGSM, and SDOR-stor. Error bars are the SEM of the per-seed paired drop (clean$-$attacked) across 3 seeds. Lower bars are more robust.}
 \label{fig:drop-bar}
 \end{figure}
@@ -233,7 +233,7 @@ Table~\ref{tab:transfer} reports the diagonal mean (self-attack), off-diagonal m
 \begin{table}[H]
 \centering
 \small
-\input{figures/transfer_table.tex}
+\input{figures/mpe_simple_spread_transfer_table.tex}
 \caption{Cross-agent perturbation transfer at $\epsilon=0.25$. \emph{Clean} is the mean clean test return; \emph{Diag.\ drop} is the mean drop when agent $i$'s perturbation is applied to agent $i$ itself (others clean); \emph{off-diag.\ drop} is the corresponding drop when agent $i$'s perturbation is applied to agent $j \neq i$; \emph{transfer ratio} is the off-diagonal drop divided by the diagonal drop.}
 \label{tab:transfer}
 \end{table}
@@ -273,14 +273,36 @@ Table~\ref{tab:transfer} reports the diagonal mean (self-attack), off-diagonal m
 \subsection{MPE \texttt{simple\_reference}}
 \label{sec:simple-reference-results}
 
-% TODO: Discuss the MPE simple_reference results once the sweep finishes.
-% Idea bullets (placeholder until the sweep finishes):
+% TODO: Discuss the MPE simple_reference results.
 \begin{itemize}
   \item same protocol as simple\_spread, just diff env: 5 algos x 2 sharings x 3 seeds, same attacks + eps grid
   \item key diffs: 2 agents (vs 3), and obs include a comm channel from the other agent's policy
   \item question: does transfer ratio drop reproduce on smaller team + comm obs?
   \item open Q: should fgsm mask only sensor obs or comm bits too? right now we perturb everything, comm-only ablation = follow up
 \end{itemize}
+
+\begin{table}[H]
+\centering
+\small
+\input{figures/mpe_simple_reference_results_table.tex}
+\caption{Mean test return on MPE \texttt{simple\_reference} for the clean environment and three observation-perturbation attacks (random noise, FGSM, SDOR-stor) at $\epsilon=0.25$. Values are mean $\pm$ SEM over 3 seeds with $n_{\mathrm{episodes}}=100$ each. Higher is better.}
+\label{tab:simple-reference-main}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\linewidth]{figures/mpe_simple_reference_attack_drop_bar.png}
+\caption{Mean drop in test return on \texttt{simple\_reference} relative to the clean baseline at $\epsilon=0.25$, per (algorithm, sharing) cell, broken out by attack: random noise, FGSM, and SDOR-stor. Error bars are the SEM of the per-seed paired drop across 3 seeds. Lower bars are more robust.}
+\label{fig:simple-reference-drop-bar}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\input{figures/mpe_simple_reference_transfer_table.tex}
+\caption{Cross-agent perturbation transfer on \texttt{simple\_reference} at $\epsilon=0.25$. With $N=2$ agents, the matrix is $2\times 2$ so diagonal and off-diagonal each average over only 2 entries.}
+\label{tab:simple-reference-transfer}
+\end{table}
 
 
 
@@ -370,7 +392,7 @@ Table~\ref{tab:transfer} reports the diagonal mean (self-attack), off-diagonal m
 \centering
 \scriptsize
 \setlength{\tabcolsep}{3pt}
-\input{figures/appendix_full_table.tex}
+\input{figures/mpe_simple_spread_appendix_full_table.tex}
 \caption{Mean test return $\pm$ SEM over 3 seeds ($n_{\mathrm{episodes}}=100$ each) for every (algorithm, sharing, attack, $\epsilon$) cell on MPE \texttt{simple\_spread}. Per-seed values available in \texttt{figures/aggregate.json}.}
 \label{tab:appendix-full}
 \end{table}
@@ -400,7 +422,7 @@ Table~\ref{tab:transfer} reports the diagonal mean (self-attack), off-diagonal m
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\linewidth]{figures/transfer_heatmaps.png}
+\includegraphics[width=\linewidth]{figures/mpe_simple_spread_transfer_heatmaps.png}
 \caption{Cross-agent perturbation transfer matrices for each (algorithm, sharing) cell. Each cell displays a $3\times 3$ matrix where the entry $(i, j)$ is the drop in test return when agent $i$'s FGSM perturbation is applied to agent $j$. Darker is more disruptive.}
 \label{fig:transfer-heatmaps}
 \end{figure}
