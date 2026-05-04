@@ -50,9 +50,10 @@ ENV_MAP = {
 # Sacred overrides to neutralise confounds when the _ns variant defaults differ
 # from the shared variant's defaults (CLAUDE.md sharing-toggle table).
 EQUALISATION_OVERRIDES = {
-    ("iql",   "independent"): {"use_rnn": "True", "epsilon_anneal_time": "200000"},
-    ("ippo",  "independent"): {"use_rnn": "True"},
-    ("mappo", "independent"): {"use_rnn": "True"},
+    ("iql",   "independent"): {"use_rnn": "True", "epsilon_anneal_time": "200000",
+                                "hidden_dim": "128"},
+    ("ippo",  "independent"): {"use_rnn": "True", "hidden_dim": "128"},
+    ("mappo", "independent"): {"use_rnn": "True", "hidden_dim": "128"},
 }
 
 
